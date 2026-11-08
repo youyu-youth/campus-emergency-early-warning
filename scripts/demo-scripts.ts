@@ -25,6 +25,10 @@ function narrative(text: string): string {
   return JSON.stringify({ narrative: text });
 }
 
+function notificationJson(title: string, content: string): string {
+  return JSON.stringify({ title, content });
+}
+
 export const DEMO_SCRIPTS: Record<
   ScenarioKey,
   {
@@ -33,6 +37,7 @@ export const DEMO_SCRIPTS: Record<
     handling_security: ScriptedResponse[];
     handling_medical: ScriptedResponse[];
     handling_logistics: ScriptedResponse[];
+    notification: ScriptedResponse[];
   }
 > = {
   fire_alarm: {
@@ -84,6 +89,16 @@ export const DEMO_SCRIPTS: Record<
       narrative("后勤组改用备用回路完成三层东区断电,并设置好外围警戒线(演示剧本响应)。"),
       narrative("后勤组启动应急广播循环播放疏散引导,疏散节奏明显加快(演示剧本响应)。"),
     ],
+    notification: [
+      notificationJson(
+        "【模拟演练】图书馆三层火情疏散通知(师生)",
+        "【模拟演练】图书馆三层东区发现烟雾并确认疑似火情,三层全体师生请立即停止阅览,沿西侧楼梯有序疏散至图书馆前广场集结点,服从现场保安引导,勿乘电梯、勿返回取物。本通知为模拟演练数据,非真实警情。",
+      ),
+      notificationJson(
+        "【模拟演练】图书馆三层火情情况通报(家长)",
+        "【模拟演练】家长您好:今日演练中图书馆三层东区模拟发生火情,学校已按预案组织疏散与处置,学生安全在控,请勿恐慌赶往学校,后续将通过学校渠道通报演练情况。本通报为模拟演练数据,非真实警情。",
+      ),
+    ],
   },
   medical_emergency: {
     perception: [
@@ -121,5 +136,15 @@ export const DEMO_SCRIPTS: Record<
     handling_security: [narrative("保安组疏导围观学生,预留出救护车通道,现场秩序良好(演示剧本响应)。")],
     handling_medical: [narrative("医务组 90 秒内到达现场,学生意识恢复,生命体征平稳,持续观察(演示剧本响应)。")],
     handling_logistics: [narrative("后勤组将担架与急救器材运抵现场,并协助完成模拟转运准备(演示剧本响应)。")],
+    notification: [
+      notificationJson(
+        "【模拟演练】操场西侧学生突发疾病处置通知(师生)",
+        "【模拟演练】操场西侧跑道有一名学生突发身体不适倒地,医务组已在场处置。请在场师生听从保安引导,不围观聚集,为救护预留通道,按正常秩序活动。本通知为模拟演练数据,非真实警情。",
+      ),
+      notificationJson(
+        "【模拟演练】操场西侧学生突发疾病情况通报(家长)",
+        "【模拟演练】家长您好:今日演练中操场西侧有一名学生模拟突发疾病,学校医务组已第一时间到场处置,学生情况平稳,请勿担忧。本通报为模拟演练数据,非真实警情。",
+      ),
+    ],
   },
 };

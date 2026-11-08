@@ -3,6 +3,8 @@
 
 import type { DispatchInput, GradingInput, RedispatchInput } from "./command";
 import type { HandlingInput } from "./handling";
+import { AUDIENCE_LABELS } from "../simulation/delivery-rules";
+import type { NotificationInput } from "./notification";
 import type { PerceptionInput } from "./perception";
 
 export function perceptionPrompt(input: PerceptionInput): string {
@@ -149,5 +151,36 @@ export function handlingPrompt(input: HandlingInput): string {
 仅输出一个 JSON 对象,不要输出任何其他文字或代码块标记。字段如下:
 {
   "narrative": "执行叙述(中文,2–4 句,第一人称队伍视角或客观陈述均可)"
+}`;
+}
+
+const NOTIFICATION_AUDIENCE_BRIEFS: Record<NotificationInput["audience"], string> = {
+  staff_students: "面向全体师生:给出明确的行动指引(疏散路线/集结点/服从引导),语气果断清晰。",
+  parents: "面向学生家长:告知情况已受控、学生安全,请勿恐慌赶往现场,语气平稳安抚。",
+};
+
+export function notificationPrompt(input: NotificationInput): string {
+  return `你是校园应急演练平台的「通知发布智能体」。当前处于模拟演练环境,下述事件为演练数据,不是真实警情。
+
+## 任务
+为下述事件撰写面向「${AUDIENCE_LABELS[input.audience]}」的通知草稿。${NOTIFICATION_AUDIENCE_BRIEFS[input.audience]}
+
+## 硬性要求
+- 标题与正文都必须包含显著的「模拟演练」标识(如【模拟演练】前缀),绝不表述为真实警情。
+
+## 事件(模拟演练数据)
+- 标题:${input.event.title}
+- 类型:${input.event.type} · 等级 ${input.severity}
+- 位置:${input.event.location}
+- 当前模拟时间:${input.simTimeLabel}
+
+## 场景
+- 演练场景:${input.scenarioName}(${input.scenarioKey})
+
+## 输出要求
+仅输出一个 JSON 对象,不要输出任何其他文字或代码块标记。字段如下:
+{
+  "title": "通知标题(中文一句话,含【模拟演练】)",
+  "content": "通知正文(中文,3–5 句,含「模拟演练」标识)"
 }`;
 }

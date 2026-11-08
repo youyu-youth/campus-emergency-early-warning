@@ -2,15 +2,25 @@
 // 表结构见 migrations.ts,行类型见 types.ts
 
 import { randomUUID } from "node:crypto";
+import type { NotificationAudience } from "../simulation/delivery-rules";
 import type {
   DrillStatus,
   EventSeverity,
   EventStatus,
+  NotificationStatus,
   SignalStatus,
   TaskStatus,
 } from "../simulation/state-machines";
 import type { Db } from "./client";
-import type { DrillRow, EventRow, GraphRunRow, SignalRow, TaskRow, TimelineNodeRow } from "./types";
+import type {
+  DrillRow,
+  EventRow,
+  GraphRunRow,
+  NotificationRow,
+  SignalRow,
+  TaskRow,
+  TimelineNodeRow,
+} from "./types";
 
 // —— 演练 ——
 
@@ -196,6 +206,60 @@ export function completeTask(db: Db, id: string, status: TaskStatus, result: str
   db.prepare(
     "UPDATE tasks SET status = ?, result = ?, completed_sim_time = ?, updated_at = ? WHERE id = ?",
   ).run(status, result, completedSimTime, new Date().toISOString(), id);
+}
+
+// —— 通知 ——
+
+export interface NewNotification {
+  drill_id: string;
+  event_id: string;
+  audience: NotificationAudience;
+  title: string;
+  content: string;
+}
+
+export function insertNotification(db: Db, row: NewNotification): NotificationRow {
+  const notification: NotificationRow = {
+    id: randomUUID(),
+    ...row,
+    status: "draft",
+    delivery: null,
+    published_sim_time: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  db.prepare(
+    `INSERT INTO notifications (id, drill_id, event_id, audience, title, content, status)
+     VALUES (@id, @drill_id, @event_id, @audience, @title, @content, @status)`,
+  ).run(notification);
+  return notification;
+}
+
+export function listNotificationsByDrill(db: Db, drillId: string): NotificationRow[] {
+  return db
+    .prepare("SELECT * FROM notifications WHERE drill_id = ? ORDER BY created_at, rowid")
+    .all(drillId) as NotificationRow[];
+}
+
+export function updateNotificationStatus(db: Db, id: string, status: NotificationStatus): void {
+  db.prepare("UPDATE notifications SET status = ?, updated_at = ? WHERE id = ?").run(
+    status,
+    new Date().toISOString(),
+    id,
+  );
+}
+
+/** 通知发布终态:写入送达统计;发布成功记发布(模拟)时刻,失败置空 */
+export function finishNotification(
+  db: Db,
+  id: string,
+  status: NotificationStatus,
+  delivery: string,
+  publishedSimTime: string | null,
+): void {
+  db.prepare(
+    "UPDATE notifications SET status = ?, delivery = ?, published_sim_time = ?, updated_at = ? WHERE id = ?",
+  ).run(status, delivery, publishedSimTime, new Date().toISOString(), id);
 }
 
 // —— 时间线 ——

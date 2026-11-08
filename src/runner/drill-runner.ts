@@ -1,6 +1,7 @@
 // 进程内推演运行器(ADR 0001):tick 循环驱动模拟时钟与信号到期,每步落库
-// 当前实现感知段、研判段与处置段:信号 → 感知上报 → 定级确认 → 任务方案确认 → 三角色并行处置
-// (里程碑演变 + 重新调度评估) → 事件 controlled;处置段完成后自动暂停,等待通知发布接入(后续路线)
+// 当前实现感知段、研判段、处置段与通知段:信号 → 感知上报 → 定级确认 → 任务方案确认 → 三角色并行处置
+// (里程碑演变 + 重新调度评估) → 事件 controlled → 双受众通知确认发布(模拟送达);
+// 通知段完成后自动暂停,等待复盘评估接入(后续路线)
 
 import {
   TaskPlanItemSchema,
@@ -8,9 +9,11 @@ import {
   type GradingInput,
   type RedispatchInput,
 } from "../agents/command";
+import type { NotificationInput } from "../agents/notification";
 import type { AgentChatModel } from "../agents/model";
 import type { Db } from "../db/client";
 import {
+  finishNotification,
   getActiveDrills,
   getDrill,
   getEventByDrillId,
@@ -20,6 +23,7 @@ import {
   insertSignal,
   insertTask,
   insertTimelineNode,
+  listNotificationsByDrill,
   listSignalsByDrill,
   listTasksByDrill,
   listTimelineByDrill,
@@ -27,11 +31,12 @@ import {
   updateDrillStatus,
   updateEventGrading,
   updateEventStatus,
+  updateNotificationStatus,
   updateTaskStatus,
   updateTimelineNodeDetail,
   upsertGraphRun,
 } from "../db/queries";
-import type { DrillRow, TaskRow, TimelineNodeRow } from "../db/types";
+import type { DrillRow, NotificationRow, TaskRow, TimelineNodeRow } from "../db/types";
 import {
   buildDispatchGraph,
   buildRedispatchGraph,
@@ -39,6 +44,11 @@ import {
 } from "../graph/dispatch";
 import { buildGradingGraph, type GradingSnapshot } from "../graph/grading";
 import { buildHandlingGraph, emptyHandlingState, type HandlingState } from "../graph/handling";
+import {
+  buildNotificationGraph,
+  type NotificationSnapshot,
+  type PublishRecord,
+} from "../graph/notification";
 import { buildPerceptionGraph, type PendingSignal } from "../graph/perception";
 import {
   formatSimClock,
@@ -51,10 +61,16 @@ import {
 } from "../simulation/clock";
 import { generateEvolution, generateSignalScript, getScenario } from "../simulation/engine";
 import type { ScenarioKey } from "../simulation/scenarios";
+import {
+  computeDelivery,
+  MAX_PUBLISH_ATTEMPTS,
+  type NotificationAudience,
+} from "../simulation/delivery-rules";
 import { computeTaskOutcome, MAX_TASK_ATTEMPTS, type TaskPlanItem } from "../simulation/task-rules";
 import {
   DRILL_TRANSITIONS,
   EVENT_TRANSITIONS,
+  NOTIFICATION_TRANSITIONS,
   SEVERITY_LABELS,
   TASK_TRANSITIONS,
   transition,
@@ -86,7 +102,7 @@ export interface StartDrillInput {
 
 /** graph_runs.state 的快照形状(运行器是唯一写入方,按 phase 演进) */
 export interface DrillRunState {
-  phase: "perception" | "grading" | "handling";
+  phase: "perception" | "grading" | "handling" | "notification";
   eventId: string | null;
   processedSignalIds: string[];
   grading?: GradingSnapshot;
@@ -94,6 +110,8 @@ export interface DrillRunState {
   dispatch?: DispatchSnapshot;
   /** 处置段执行簿(里程碑/评估/任务排期) */
   handling?: HandlingState;
+  /** 通知段进度(草稿确认/发布尝试) */
+  notification?: NotificationSnapshot;
 }
 
 export class DrillRunner {
@@ -105,6 +123,7 @@ export class DrillRunner {
   private dispatchGraph: ReturnType<typeof buildDispatchGraph> | null = null;
   private redispatchGraph: ReturnType<typeof buildRedispatchGraph> | null = null;
   private handlingGraph: ReturnType<typeof buildHandlingGraph> | null = null;
+  private notificationGraph: ReturnType<typeof buildNotificationGraph> | null = null;
 
   constructor(private readonly deps: DrillRunnerDeps) {}
 
@@ -452,13 +471,336 @@ export class DrillRunner {
       });
     }
 
-    // 段末:任务全部终态 + 事件已控制 + 里程碑全部写入 → 自动暂停等待通知发布(路线下一 ticket)
+    // 段末:任务全部终态 + 事件已控制 + 里程碑全部写入 → 流入通知段(第 4 步闭环)
     if (allTerminal && eventStatus === "controlled" && handling.writtenMilestoneOffsets.length >= evolution.length) {
       this.writeHandlingState(drill.id, handling);
-      this.pauseAtPhaseEnd(drill, clock, offsetMs, nowMs);
+      await this.stepNotification(drill, clock, offsetMs, nowMs);
       return;
     }
     this.writeHandlingState(drill.id, handling);
+  }
+
+  /** 通知段:双受众草稿生成 → 第三个确认点 → 模拟发布与送达统计 → 段末暂停等待复盘 */
+  private async stepNotification(
+    drill: DrillRow,
+    clock: ClockState,
+    offsetMs: number,
+    nowMs: number,
+  ): Promise<void> {
+    const { db } = this.deps;
+    const state = this.readRunState(drill.id);
+    if (state.notification?.status === "awaiting_confirmation") return; // 等待操作员确认发布
+    const event = getEventByDrillId(db, drill.id);
+    if (!event || !event.severity) return;
+    const rows = listNotificationsByDrill(db, drill.id);
+
+    if (rows.length === 0) {
+      await this.draftNotifications(drill, event, clock, offsetMs, nowMs, []);
+      return;
+    }
+    if (!state.notification) {
+      // 中断恢复:草稿已落库但快照未写入(图完成与快照落库之间崩溃)——按既有行重建
+      await this.draftNotifications(drill, event, clock, offsetMs, nowMs, rows);
+      return;
+    }
+
+    // 草稿已生成并发布(操作员确认后或 auto):全部终态则段末暂停
+    const snapshot = state.notification;
+    if (rows.every((r) => r.status === "published_sim" || r.status === "failed")) {
+      snapshot.status = "done";
+      this.writeNotificationState(drill.id, snapshot);
+      this.pauseAtPhaseEnd(drill, "notification", clock, offsetMs, nowMs);
+    }
+  }
+
+  /** 生成双受众草稿:经确认缝等待发布,或 auto 直接发布(失败自动重试一次);
+   *  existing 非空 = 中断恢复,既有 ⚑ 节点直接复用、缺失受众补齐(图幂等) */
+  private async draftNotifications(
+    drill: DrillRow,
+    event: NonNullable<ReturnType<typeof getEventByDrillId>>,
+    clock: ClockState,
+    offsetMs: number,
+    nowMs: number,
+    existing: NotificationRow[],
+  ): Promise<void> {
+    const { db } = this.deps;
+    const scenarioKey = drill.scenario_key as ScenarioKey;
+    const scenario = getScenario(scenarioKey);
+    const requiresConfirmation = !JSON.parse(drill.params).autoConfirm;
+
+    // 恢复路径:⚑ 节点已写而快照丢失 → 不重复建节点,直接从节点重建
+    const priorNode = existing.length > 0
+      ? listTimelineByDrill(db, drill.id).find((n) => n.node_type === "notification")
+      : undefined;
+    let nodeId = priorNode?.id;
+    let rows = existing;
+
+    if (!priorNode) {
+      const input: Omit<NotificationInput, "audience"> = {
+        event: {
+          type: event.type as NotificationInput["event"]["type"],
+          title: event.title,
+          location: event.location,
+        },
+        scenarioKey,
+        scenarioName: scenario.name,
+        severity: event.severity as EventSeverity,
+        simTimeLabel: formatSimClock(offsetMs),
+      };
+      this.notificationGraph ??= buildNotificationGraph({
+        db,
+        model: this.deps.model,
+        now: this.deps.now ?? (() => Date.now()),
+        onTimelineNode: this.deps.onTimelineNode,
+      });
+      const result = await this.notificationGraph.invoke({
+        drillId: drill.id,
+        eventId: event.id,
+        input,
+        existing,
+        simOriginMs: clock.simOrigin,
+        offsetMs,
+        requiresConfirmation,
+      });
+      nodeId = result.nodeId!;
+      rows = result.rows;
+    }
+
+    const snapshot: NotificationSnapshot = {
+      status: "awaiting_confirmation",
+      nodeId: nodeId!,
+      // 中断恢复时尝试计数从 ⚑ 节点的发布记录重建,避免多计一次重试
+      attempts: priorNode ? this.countPublishAttempts(db, nodeId!) : {},
+    };
+
+    if (requiresConfirmation) {
+      // 进入通知确认点:演练等待人工确认,模拟时钟同步停走
+      snapshot.awaitedSinceRealMs = this.deps.now?.() ?? Date.now();
+      this.enterAwaitingConfirmation(drill, clock, nowMs, {
+        ...this.readRunState(drill.id),
+        phase: "notification",
+        notification: snapshot,
+      });
+      return;
+    }
+
+    // auto 模式:直接发布(失败自动重试一次);全部终态则段末暂停
+    this.publishNotifications(drill, snapshot, clock.simOrigin, offsetMs, true);
+    if (listNotificationsByDrill(db, drill.id).every((r) => r.status === "published_sim" || r.status === "failed")) {
+      snapshot.status = "done";
+      this.writeNotificationState(drill.id, snapshot);
+      this.pauseAtPhaseEnd(drill, "notification", clock, offsetMs, nowMs);
+    }
+  }
+
+  /** 从 ⚑ 通知节点的发布记录重建各受众已消耗的尝试次数(中断恢复用) */
+  private countPublishAttempts(db: Db, nodeId: string): Record<string, number> {
+    const node = getTimelineNode(db, nodeId);
+    if (!node) return {};
+    const publishes = (JSON.parse(node.detail).publishes ?? []) as Array<{ audience: string; attempt: number }>;
+    const attempts: Record<string, number> = {};
+    for (const p of publishes) {
+      attempts[p.audience] = Math.max(attempts[p.audience] ?? 0, p.attempt);
+    }
+    return attempts;
+  }
+
+  /** 发布所有待确认通知(送达统计由规则按种子计算,结果追加 ⚑ 节点);autoRetry 时失败自动重试一次 */
+  private publishNotifications(
+    drill: DrillRow,
+    snapshot: NotificationSnapshot,
+    simOriginMs: number,
+    offsetMs: number,
+    autoRetry: boolean,
+  ): void {
+    const { db } = this.deps;
+    const simTime = simTimeIso(simOriginMs, offsetMs);
+    const results: PublishRecord[] = [];
+
+    for (const row of listNotificationsByDrill(db, drill.id)) {
+      if (row.status !== "pending_confirmation") continue;
+      const attempt = (snapshot.attempts[row.audience] ?? 0) + 1;
+      const ok = this.publishOneNotification(drill, row, attempt, snapshot, results, simTime);
+      if (!ok && autoRetry && attempt < MAX_PUBLISH_ATTEMPTS) {
+        this.republishNotification(drill, row, attempt + 1, snapshot, results, simTime);
+      }
+    }
+
+    if (results.length > 0) {
+      this.appendNotificationPublishes(db, snapshot.nodeId, results);
+    }
+  }
+
+  /** 重试一条失败通知:failed → pending_confirmation → 再次发布 */
+  private republishNotification(
+    drill: DrillRow,
+    row: NotificationRow,
+    attempt: number,
+    snapshot: NotificationSnapshot,
+    results: PublishRecord[],
+    simTime: string,
+  ): boolean {
+    updateNotificationStatus(
+      this.deps.db,
+      row.id,
+      transition(NOTIFICATION_TRANSITIONS, "failed", "pending_confirmation"),
+    );
+    return this.publishOneNotification(
+      drill,
+      { ...row, status: "pending_confirmation" },
+      attempt,
+      snapshot,
+      results,
+      simTime,
+    );
+  }
+
+  /** 发布单条通知:pending_confirmation → published_sim | failed,统计与尝试次数落库(失败不记发布时刻) */
+  private publishOneNotification(
+    drill: DrillRow,
+    row: NotificationRow,
+    attempt: number,
+    snapshot: NotificationSnapshot,
+    results: PublishRecord[],
+    simTime: string,
+  ): boolean {
+    const outcome = computeDelivery(drill.seed, row.audience as NotificationAudience, attempt);
+    const target: "published_sim" | "failed" = outcome.ok ? "published_sim" : "failed";
+    const status = transition(NOTIFICATION_TRANSITIONS, "pending_confirmation", target);
+    finishNotification(
+      this.deps.db,
+      row.id,
+      status,
+      JSON.stringify({ ...outcome.stats, channelOk: outcome.ok, attempt }),
+      outcome.ok ? simTime : null,
+    );
+    snapshot.attempts[row.audience] = attempt;
+    results.push({
+      audience: row.audience as NotificationAudience,
+      attempt,
+      status: target,
+      stats: outcome.stats,
+      publishedSimTime: outcome.ok ? simTime : null,
+    });
+    return outcome.ok;
+  }
+
+  /** 操作员确认发布通知:双受众模拟发布、记录 operator_action 与 ⚑ 节点确认信息,恢复推演 */
+  async confirmNotification(): Promise<{ published: number; failed: number }> {
+    const { db } = this.deps;
+    const drill = this.current();
+    if (!drill) throw new Error("尚未发起演练,无可确认的通知");
+    if (drill.status !== "awaiting_confirmation") {
+      throw new Error(`当前演练状态为 ${drill.status},没有等待确认的通知`);
+    }
+    const state = this.readRunState(drill.id);
+    const notification = state.notification;
+    if (!notification || notification.status !== "awaiting_confirmation") {
+      throw new Error("没有等待确认的通知");
+    }
+
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const waitedMs = nowMs - (notification.awaitedSinceRealMs ?? nowMs);
+    const confirmedRealTime = new Date(nowMs).toISOString();
+    const clock = JSON.parse(drill.clock_state) as ClockState;
+    const offsetMs = simOffsetMs(clock, nowMs);
+
+    // 发布(送达统计由规则计算,失败不重试,由操作员决定是否经 retryNotification 重试)
+    this.publishNotifications(drill, notification, clock.simOrigin, offsetMs, false);
+    const rows = listNotificationsByDrill(db, drill.id);
+    const published = rows.filter((r) => r.status === "published_sim").length;
+    const failed = rows.filter((r) => r.status === "failed").length;
+
+    // ⚑ 通知节点追加确认信息
+    const node = getTimelineNode(db, notification.nodeId);
+    if (node) {
+      updateTimelineNodeDetail(
+        db,
+        notification.nodeId,
+        JSON.stringify({
+          ...JSON.parse(node.detail),
+          confirmation: { action: "confirm", waitedMs, confirmedRealTime },
+        }),
+      );
+    }
+
+    // 操作员动作留痕
+    const operatorNode = insertTimelineNode(db, {
+      drill_id: drill.id,
+      event_id: state.eventId,
+      phase: "notification",
+      node_type: "operator_action",
+      title: `操作员确认发布通知:${rows.length} 份(发布 ${published} / 失败 ${failed},等待 ${Math.round(waitedMs / 1000)}s)`,
+      detail: JSON.stringify({ action: "confirm", published, failed, waitedMs }),
+      actor: "operator",
+      sim_time: simTimeIso(clock.simOrigin, offsetMs),
+      real_time: confirmedRealTime,
+    });
+    this.deps.onTimelineNode?.(operatorNode);
+
+    // 恢复模拟时钟与演练状态
+    updateDrillClock(db, drill.id, JSON.stringify(resumeClock(clock, nowMs)));
+    const status = transition(DRILL_TRANSITIONS, "awaiting_confirmation", "running");
+    updateDrillStatus(db, drill.id, status);
+    this.writeNotificationState(drill.id, { ...notification, status: "done" });
+    return { published, failed };
+  }
+
+  /** 重试失败的模拟分发(每份通知最多重试一次):结果追加 ⚑ 节点,不改变演练状态 */
+  async retryNotification(): Promise<{ retried: number; published: number; failed: number }> {
+    const { db } = this.deps;
+    const drill = this.current();
+    if (!drill) throw new Error("尚未发起演练,无可重试的通知");
+    const state = this.readRunState(drill.id);
+    const notification = state.notification;
+    if (!notification) throw new Error("没有可重试的通知");
+
+    const failedRows = listNotificationsByDrill(db, drill.id).filter((r) => r.status === "failed");
+    if (failedRows.length === 0) throw new Error("没有失败的通知可重试");
+
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const clock = JSON.parse(drill.clock_state) as ClockState;
+    const offsetMs = simOffsetMs(clock, nowMs);
+    const simTime = simTimeIso(clock.simOrigin, offsetMs);
+    const results: PublishRecord[] = [];
+
+    for (const row of failedRows) {
+      const attempt = (notification.attempts[row.audience] ?? 0) + 1;
+      if (attempt > MAX_PUBLISH_ATTEMPTS) continue; // 已达重试上限,保持终态 failed
+      this.republishNotification(drill, row, attempt, notification, results, simTime);
+    }
+
+    if (results.length === 0) throw new Error("失败的通知均已达到重试上限");
+    this.appendNotificationPublishes(db, notification.nodeId, results);
+    this.writeNotificationState(drill.id, notification);
+    const rows = listNotificationsByDrill(db, drill.id);
+    return {
+      retried: results.length,
+      published: rows.filter((r) => r.status === "published_sim").length,
+      failed: rows.filter((r) => r.status === "failed").length,
+    };
+  }
+
+  /** ⚑ 通知节点追加发布结果(发布时刻与送达统计) */
+  private appendNotificationPublishes(db: Db, nodeId: string, results: PublishRecord[]): void {
+    const node = getTimelineNode(db, nodeId);
+    if (!node) return;
+    const detail = JSON.parse(node.detail) as { publishes?: PublishRecord[] };
+    updateTimelineNodeDetail(
+      db,
+      nodeId,
+      JSON.stringify({ ...detail, publishes: [...(detail.publishes ?? []), ...results] }),
+    );
+  }
+
+  private writeNotificationState(drillId: string, notification: NotificationSnapshot): void {
+    const status = (getDrill(this.deps.db, drillId)?.status ?? "running") as string;
+    upsertGraphRun(
+      this.deps.db,
+      drillId,
+      status,
+      JSON.stringify({ ...this.readRunState(drillId), phase: "notification", notification }),
+    );
   }
 
   /** 首次派发:调度智能体产出任务方案,经确认缝或 auto 直接采纳 */
@@ -860,25 +1202,31 @@ export class DrillRunner {
     updateEventGrading(this.deps.db, event.id, severity);
   }
 
-  /** 段末自动暂停:处置段完成,等待通知发布接入(路线下一 ticket) */
-  private pauseAtPhaseEnd(drill: DrillRow, clock: ClockState, offsetMs: number, nowMs: number): void {
+  /** 段末自动暂停:通知段完成,等待复盘评估接入(路线下一 ticket) */
+  private pauseAtPhaseEnd(
+    drill: DrillRow,
+    phase: "notification",
+    clock: ClockState,
+    offsetMs: number,
+    nowMs: number,
+  ): void {
     const { db } = this.deps;
     const status = transition(DRILL_TRANSITIONS, drill.status as DrillStatus, "paused");
     updateDrillStatus(db, drill.id, status);
     updateDrillClock(db, drill.id, JSON.stringify(pauseClock(clock, nowMs)));
     const node = insertTimelineNode(db, {
       drill_id: drill.id,
-      phase: "handling",
+      phase,
       node_type: "status_change",
-      title: "处置阶段完成,演练自动暂停(等待通知发布接入)",
-      detail: JSON.stringify({ from: drill.status, to: "paused", reason: "handling_phase_done" }),
+      title: "通知阶段完成,演练自动暂停(等待复盘评估接入)",
+      detail: JSON.stringify({ from: drill.status, to: "paused", reason: "notification_phase_done" }),
       actor: "drill_runner",
       sim_time: simTimeIso(clock.simOrigin, offsetMs),
       real_time: new Date(nowMs).toISOString(),
     });
     this.deps.onTimelineNode?.(node);
     const state = this.readRunState(drill.id);
-    upsertGraphRun(db, drill.id, status, JSON.stringify({ ...state, phase: "handling" }));
+    upsertGraphRun(db, drill.id, status, JSON.stringify({ ...state, phase }));
   }
 
   /** 进入确认缝:演练转 awaiting_confirmation、模拟时钟同步停走、快照落库 */

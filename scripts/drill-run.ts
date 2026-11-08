@@ -10,6 +10,7 @@ import { ScriptedModel, wrapLangChain } from "../src/agents/model";
 import { getDb } from "../src/db/client";
 import {
   getGraphRunByDrillId,
+  listNotificationsByDrill,
   listSignalsByDrill,
   listTasksByDrill,
   listTimelineByDrill,
@@ -19,6 +20,7 @@ import {
 import { formatSimClock } from "../src/simulation/clock";
 import { SCENARIOS } from "../src/simulation/scenarios";
 import { DrillRunner } from "../src/runner/drill-runner";
+import { AUDIENCE_LABELS, type DeliveryStats } from "../src/simulation/delivery-rules";
 import type { TaskPlanItem } from "../src/simulation/task-rules";
 import {
   ROLE_LABELS,
@@ -100,6 +102,7 @@ const NODE_ICONS: Record<string, string> = {
   grading: "⚑",
   dispatch: "📋",
   feedback: "✅",
+  notification: "📢",
   anomaly: "⚠️ ",
   status_change: "⏸️ ",
   operator_action: "👤",
@@ -159,11 +162,15 @@ async function main(): Promise<void> {
       const pending = readPendingConfirmation(db, drillId);
       if (pending === "grading") {
         await runner.confirmGrading(await promptGradingConfirmation(reader, db, drillId));
-      } else {
+      } else if (pending === "dispatch") {
         await runner.confirmDispatch(await promptDispatchConfirmation(reader, db, drillId));
+      } else {
+        await promptNotificationConfirmation(reader, db, drillId);
+        await runner.confirmNotification();
       }
       point = await runUntilDecisionPoint(runner);
     }
+    await promptNotificationRetryIfNeeded(reader, runner, db, drillId);
   } finally {
     reader.close();
   }
@@ -212,12 +219,54 @@ class LineReader {
 }
 
 /** 当前等待确认的关键节点类型(薄读取层:从 graph_runs 快照判断) */
-function readPendingConfirmation(db: ReturnType<typeof getDb>, drillId: string): "grading" | "dispatch" {
+function readPendingConfirmation(
+  db: ReturnType<typeof getDb>,
+  drillId: string,
+): "grading" | "dispatch" | "notification" {
   const state = JSON.parse(getGraphRunByDrillId(db, drillId)!.state) as {
     grading?: { status?: string };
     dispatch?: { status?: string };
+    notification?: { status?: string };
   };
-  return state.grading?.status === "awaiting_confirmation" ? "grading" : "dispatch";
+  if (state.grading?.status === "awaiting_confirmation") return "grading";
+  return state.dispatch?.status === "awaiting_confirmation" ? "dispatch" : "notification";
+}
+
+/** 决策坞(CLI 版):展示双受众通知全文,确认发布 */
+async function promptNotificationConfirmation(
+  reader: LineReader,
+  db: ReturnType<typeof getDb>,
+  drillId: string,
+): Promise<void> {
+  const notifications = listNotificationsByDrill(db, drillId).filter((n) => n.status === "pending_confirmation");
+  console.log("");
+  console.log("⚑ 决策坞 · 通知发布确认(演练已暂停,模拟时钟停走)");
+  for (const n of notifications) {
+    console.log(`  ── [${AUDIENCE_LABELS[n.audience as keyof typeof AUDIENCE_LABELS]}] ${n.title}`);
+    for (const line of n.content.split(/(?=。)/)) {
+      if (line.trim()) console.log(`     ${line.trim()}`);
+    }
+  }
+  await reader.question("请操作:直接回车 = 确认发布(模拟分发):");
+}
+
+/** 段末如有失败通知:提供重试入口(模拟分发失败只影响通知自身) */
+async function promptNotificationRetryIfNeeded(
+  reader: LineReader,
+  runner: DrillRunner,
+  db: ReturnType<typeof getDb>,
+  drillId: string,
+): Promise<void> {
+  for (;;) {
+    const failed = listNotificationsByDrill(db, drillId).filter((n) => n.status === "failed");
+    if (failed.length === 0) return;
+    const names = failed.map((n) => AUDIENCE_LABELS[n.audience as keyof typeof AUDIENCE_LABELS]).join("、");
+    console.log("");
+    const answer = (await reader.question(`⚠ ${failed.length} 份通知模拟分发失败(${names})。输入 r 重试发布,直接回车跳过:`)).trim().toLowerCase();
+    if (answer !== "r") return;
+    const result = await runner.retryNotification();
+    console.log(`  重试完成:发布 ${result.published} 份,仍失败 ${result.failed} 份`);
+  }
 }
 
 /** tick 循环推进到决策点:返回离开 running 时的演练状态(等待确认 / 段末暂停 / 终态) */
@@ -367,8 +416,19 @@ function printSummary(db: ReturnType<typeof getDb>, drillId: string): void {
     return acc;
   }, {});
   const taskSummary = Object.entries(byStatus).map(([s, n]) => `${s}×${n}`).join(" ");
-  console.log(`信号:${signals.length} 条,任务:${tasks.length} 项(${taskSummary}),时间线节点:${nodes.length} 个`);
-  console.log(`下一步:通知发布智能体接入后,恢复演练进入通知阶段(路线下一 ticket)`);
+  const notifications = listNotificationsByDrill(db, drillId);
+  const notifySummary = notifications.length
+    ? `,通知:${notifications.length} 份(${notifications.map((n) => n.status).join("/")})`
+    : "";
+  console.log(`信号:${signals.length} 条,任务:${tasks.length} 项(${taskSummary})${notifySummary},时间线节点:${nodes.length} 个`);
+  for (const n of notifications) {
+    if (n.delivery) {
+      const delivery = JSON.parse(n.delivery) as DeliveryStats;
+      const label = AUDIENCE_LABELS[n.audience as keyof typeof AUDIENCE_LABELS];
+      console.log(`  通知[${label}] ${n.title}:送达 ${delivery.delivered}/${delivery.total}(失败 ${delivery.failed})`);
+    }
+  }
+  console.log(`下一步:复盘评估智能体接入后,恢复演练生成复盘报告(路线下一 ticket)`);
   process.exitCode = 0; // 不用 process.exit:非 TTY 下会截断异步 stdout 缓冲
 }
 
