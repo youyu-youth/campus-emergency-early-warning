@@ -7,10 +7,12 @@ import {
   getGraphRunByDrillId,
   insertSignal,
   listSignalsByDrill,
+  listTasksByDrill,
   listTimelineByDrill,
 } from "../db/queries";
 import type { ClockState } from "../simulation/clock";
 import { generateSignalScript } from "../simulation/engine";
+import type { TaskPlanItem } from "../simulation/task-rules";
 import { DrillRunner } from "./drill-runner";
 
 function perceptionJson(overrides: Record<string, unknown> = {}): string {
@@ -30,6 +32,34 @@ function commandJson(severity: "I" | "II" | "III" | "IV" = "II"): string {
     suggestedSeverity: severity,
     reasoning: "烟雾浓度超标且视觉确认,建议定为较大等级",
   });
+}
+
+// —— 处置段剧本助手 ——
+
+const PLAN_3 = [
+  { role: "security", title: "封锁并引导疏散", description: "封锁图书馆三层东区,引导人员经西侧楼梯疏散" },
+  { role: "medical", title: "医疗待命", description: "在楼下集结点待命,评估潜在伤员并准备急救" },
+  { role: "logistics", title: "切断三层电源", description: "联动切断三层东区电源,设置外围警戒线" },
+] as const;
+
+function planJson(tasks: ReadonlyArray<{ role: string; title: string; description: string }> = PLAN_3): string {
+  return JSON.stringify({ tasks, reasoning: "三角色并行处置" });
+}
+
+function evalNoJson(): string {
+  return JSON.stringify({ needsRedispatch: false, additionalTasks: [], reasoning: "现有任务覆盖处置需要,无需调整" });
+}
+
+function evalAddJson(task: { role: string; title: string; description: string }): string {
+  return JSON.stringify({
+    needsRedispatch: true,
+    additionalTasks: [task],
+    reasoning: "场景演变带来新风险,需要加派",
+  });
+}
+
+function narrativeJson(text: string): string {
+  return JSON.stringify({ narrative: text });
 }
 
 /** 以固定真实时间步进驱动运行器直到演练离开 running(或超出步数上限) */
@@ -64,10 +94,10 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     expect(signals.map((s) => s.source_ref)).toEqual(script.map((s) => s.sourceRef));
     expect(signals.every((s) => s.status === "reported")).toBe(true);
 
-    // 单事件焦点:仅创建一个事件,auto 定级后已定级,关联首信号
+    // 单事件焦点:仅创建一个事件,auto 全程跑完后事件受控,关联首信号
     const event = getEventByDrillId(db, drillId);
     expect(event).toBeDefined();
-    expect(event!.status).toBe("graded");
+    expect(event!.status).toBe("controlled");
     expect(event!.severity).toBe("II");
     expect(event!.signal_id).toBe(signals[0].id);
     expect(event!.type).toBe("fire_alarm");
@@ -86,8 +116,8 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     expect(signalNodes[1].title).toContain("补充证据");
 
     // 段末自动暂停记录 status_change 节点,双时间同时落库
-    const pauseNode = nodes.find((n) => n.node_type === "status_change");
-    expect(pauseNode?.title).toContain("暂停");
+    const pauseNode = nodes.find((n) => n.node_type === "status_change" && n.title.includes("暂停"));
+    expect(pauseNode?.title).toContain("处置");
     expect(pauseNode?.sim_time).not.toBe(pauseNode?.real_time);
 
     // 图状态快照写入 graph_runs,数据库可重建推演进度
@@ -147,12 +177,14 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
     await driveUntilNotRunning(runner, realNow);
 
-    // 降级不阻塞推演:事件仍以默认解读创建(auto 模式下继续完成定级)
+    // 降级不阻塞推演:事件仍以默认解读创建(auto 全程跑完到受控)
     const event = getEventByDrillId(db, drillId)!;
-    expect(event.status).toBe("graded");
+    expect(event.status).toBe("controlled");
     expect(event.title).toContain("感知降级");
-    // 每次降级记录一个 anomaly 节点
-    const anomalies = listTimelineByDrill(db, drillId).filter((n) => n.node_type === "anomaly");
+    // 每次感知降级记录一个 anomaly 节点(只统计感知段;后续段剧本缺失走各自降级,与本测试无关)
+    const anomalies = listTimelineByDrill(db, drillId).filter(
+      (n) => n.node_type === "anomaly" && n.phase === "perception",
+    );
     expect(anomalies).toHaveLength(generateSignalScript("fire_alarm", 42).length);
     expect(anomalies.every((n) => n.title.includes("降级"))).toBe(true);
     db.close();
@@ -286,9 +318,9 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
     expect(confirmed.severity).toBe("II");
     expect(runner.status).toBe("running");
 
-    // 确认后推演恢复,到研判段末自动暂停,时钟停走
+    // 确认后推演恢复;03 起定级后流入任务方案确认点(剧本缺失 → 降级默认方案)
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("awaiting_confirmation");
     expect((JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState).running).toBe(false);
 
     // 事件定级结果与状态机流转
@@ -316,8 +348,12 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
       confirmedRealTime: new Date(confirmedAt).toISOString(),
     });
 
-    // 段末暂停留痕 status_change
-    expect(nodes.find((n) => n.node_type === "status_change")!.title).toContain("研判");
+    // 确认任务方案后跑完处置段,段末暂停留痕 status_change
+    await runner.confirmDispatch({});
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("paused");
+    const finalNodes = listTimelineByDrill(db, drillId);
+    expect(finalNodes.find((n) => n.node_type === "status_change" && n.title.includes("暂停"))!.title).toContain("处置");
     db.close();
   });
 
@@ -336,6 +372,10 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
     const adjusted = await runner.confirmGrading({ severity: "IV" });
     expect(adjusted.severity).toBe("IV");
 
+    // 03 起,定级确认后推演继续流入任务方案确认点(剧本缺失 → 降级默认方案),确认后跑完处置段
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("awaiting_confirmation");
+    await runner.confirmDispatch({});
     await driveUntilNotRunning(runner, realNow);
     expect(runner.status).toBe("paused");
     expect(getEventByDrillId(db, drillId)!.severity).toBe("IV");
@@ -392,11 +432,11 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
     await driveUntilNotRunning(runner, realNow);
 
-    // 降级不阻塞:事件按规则默认定级(medium → Ⅲ)并完成研判段
+    // 降级不阻塞:事件按规则默认定级(medium → Ⅲ)并跑完全程
     expect(runner.status).toBe("paused");
     const event = getEventByDrillId(db, drillId)!;
     expect(event.severity).toBe("III");
-    expect(event.status).toBe("graded");
+    expect(event.status).toBe("controlled");
     const anomaly = listTimelineByDrill(db, drillId).find(
       (n) => n.node_type === "anomaly" && n.phase === "grading",
     );
@@ -405,3 +445,362 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
     db.close();
   });
 });
+
+describe("推演运行器 · 处置段(缝 1)", () => {
+  it("人工全流程:方案确认 → 三角色并行汇合反馈 → 失败重试 → 加派确认 → 事件 controlled → 段末暂停", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [perceptionJson(), perceptionJson(), perceptionJson()],
+      // 调用序:定级 → 方案 → 里程碑1评估(加派) → 里程碑2/3评估(不加派)
+      command: [
+        commandJson("II"),
+        planJson(),
+        evalAddJson({ role: "security", title: "启动应急广播", description: "循环播放疏散引导广播" }),
+        evalNoJson(),
+        evalNoJson(),
+      ],
+      handling_security: [
+        narrativeJson("保安组封锁东侧楼梯并引导 30 余名学生经西侧楼梯疏散,过程有序。"),
+        narrativeJson("广播启动后人流疏散明显加快,未出现拥挤。"),
+      ],
+      handling_medical: [narrativeJson("医务组在集结点待命,评估 2 名轻微呛咳学生,无需送医。")],
+      handling_logistics: [
+        narrativeJson("后勤组断电时配电箱跳闸,首次未能完成,准备重试。"),
+        narrativeJson("后勤组改用备用回路完成断电,并设置好警戒线。"),
+      ],
+    });
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60 });
+
+    // 定级确认
+    await driveUntilNotRunning(runner, realNow);
+    realNow.t += 30_000;
+    await runner.confirmGrading({});
+
+    // 任务方案确认点:⚑ 方案节点带全量清单
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("awaiting_confirmation");
+    const nodes0 = listTimelineByDrill(db, drillId);
+    const planNode = nodes0.find((n) => n.node_type === "dispatch" && n.title.includes("任务方案"))!;
+    expect(planNode.requires_confirmation).toBe(1);
+    const planDetail = JSON.parse(planNode.detail);
+    expect(planDetail.output.tasks).toHaveLength(3);
+    expect(planDetail.input).toBeDefined();
+    expect(planDetail.reasoning).toBeTypeOf("string");
+    realNow.t += 10_000;
+    const dispatched = await runner.confirmDispatch({});
+    expect(dispatched.dispatchedCount).toBe(3);
+
+    // 里程碑1评估建议加派 → 同一确认缝放行
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("awaiting_confirmation");
+    const proposalNode = listTimelineByDrill(db, drillId).find(
+      (n) => n.node_type === "dispatch" && n.title.includes("重新调度建议"),
+    )!;
+    expect(proposalNode.requires_confirmation).toBe(1);
+    realNow.t += 8_000;
+    await runner.confirmDispatch({});
+    // 确认信息追加到 ⚑ 节点 detail(含耗时)
+    const proposalDetail = getTimelineDetail(db, proposalNode.id) as { confirmation: { waitedMs: number } };
+    expect(proposalDetail.confirmation.waitedMs).toBe(8_000);
+
+    // 处置段跑完:暂停、时钟停走
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("paused");
+    expect((JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState).running).toBe(false);
+
+    // 任务:3 项初始 + 1 项加派;logistics 首试失败自动重试后成功(规则+种子)
+    const tasks = listTasksByDrill(db, drillId);
+    expect(tasks).toHaveLength(4);
+    expect(tasks.filter((t) => t.status === "done")).toHaveLength(4);
+    const retryTask = tasks.find((t) => t.role === "logistics")!;
+    expect(JSON.parse(retryTask.result!).attempts).toBe(2);
+    expect(JSON.parse(retryTask.result!).success).toBe(true);
+    expect(retryTask.completed_sim_time).not.toBeNull();
+    const addedTask = tasks.find((t) => t.title === "启动应急广播")!;
+    expect(addedTask.role).toBe("security");
+    expect(addedTask.status).toBe("done");
+
+    // 反馈节点:每角色叙述各异,logistics 两条(失败+重试),共 5 条;记录耗时与资源
+    const nodes = listTimelineByDrill(db, drillId);
+    const feedbacks = nodes.filter((n) => n.node_type === "feedback");
+    expect(feedbacks).toHaveLength(5);
+    expect(feedbacks.filter((n) => n.title.includes("第 2 次"))).toHaveLength(1);
+    for (const fb of feedbacks) {
+      const detail = JSON.parse(fb.detail);
+      expect(detail.output.narrative).toBeTypeOf("string");
+      expect(detail.output.durationMs).toBeGreaterThan(0);
+      expect(detail.output.resources).toBeDefined();
+    }
+    expect(feedbacks.some((n) => JSON.parse(n.detail).output.narrative.includes("广播"))).toBe(true);
+
+    // 事件状态机:graded → handling → controlled 全程留痕
+    const event = getEventByDrillId(db, drillId)!;
+    expect(event.status).toBe("controlled");
+    expect(event.severity).toBe("II");
+    const statusTitles = nodes.filter((n) => n.node_type === "status_change").map((n) => n.title);
+    expect(statusTitles.some((t) => t.includes("事件处置中"))).toBe(true);
+    expect(statusTitles.some((t) => t.includes("事件已控制"))).toBe(true);
+
+    // 里程碑 3 条(规则驱动) + operator_action 3 条(定级/方案/加派确认)
+    expect(nodes.filter((n) => n.title.startsWith("场景演变"))).toHaveLength(3);
+    const operatorNodes = nodes.filter((n) => n.node_type === "operator_action");
+    expect(operatorNodes).toHaveLength(3);
+
+    // 图快照:处置段执行簿完整,数据库可重建
+    const state = JSON.parse(getGraphRunByDrillId(db, drillId)!.state);
+    expect(state.phase).toBe("handling");
+    expect(Object.keys(state.handling.tasks)).toHaveLength(4);
+    expect(state.handling.writtenMilestoneOffsets).toHaveLength(3);
+    db.close();
+  });
+
+  it("操作员调整方案:删任务 + 改标题后执行,落库与调整后一致", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+      ],
+      command: [commandJson("III"), planJson(), evalNoJson(), evalNoJson()],
+      handling_security: [narrativeJson("保安组疏导围观学生并预留了救护通道。")],
+      handling_medical: [narrativeJson("医务组评估学生意识恢复,情况稳定。")],
+    });
+    const realNow = { t: Date.parse("2026-11-08T02:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60 });
+
+    await driveUntilNotRunning(runner, realNow);
+    await runner.confirmGrading({});
+    await driveUntilNotRunning(runner, realNow); // → 方案确认点
+    expect(runner.status).toBe("awaiting_confirmation");
+
+    // 调整:删除后勤任务,医务任务改标题
+    const adjusted: TaskPlanItem[] = [
+      { role: "medical", title: "现场急救与评估", description: "携带急救包评估生命体征" },
+      { role: "security", title: "现场秩序维护", description: "疏导围观学生,预留救护车通道" },
+    ];
+    const result = await runner.confirmDispatch({ tasks: adjusted });
+    expect(result.dispatchedCount).toBe(2);
+
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("paused");
+
+    const tasks = listTasksByDrill(db, drillId);
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((t) => t.role).sort()).toEqual(["medical", "security"]);
+    expect(tasks.find((t) => t.role === "medical")!.title).toBe("现场急救与评估");
+    expect(tasks.every((t) => t.status === "done")).toBe(true);
+
+    // 操作留痕:adjust 动作记录原建议与最终清单
+    const op = listTimelineByDrill(db, drillId)
+      .filter((n) => n.node_type === "operator_action")
+      .find((n) => n.title.includes("调整"))!;
+    const detail = JSON.parse(op.detail);
+    expect(detail.action).toBe("adjust");
+    expect(detail.kind).toBe("initial");
+    expect(detail.proposed).toHaveLength(3);
+    expect(detail.final).toHaveLength(2);
+    db.close();
+  });
+
+  it("auto 模式:方案与加派均自动采纳,全程无确认暂停", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [perceptionJson(), perceptionJson(), perceptionJson()],
+      command: [
+        commandJson("II"),
+        planJson(),
+        evalAddJson({ role: "security", title: "启动应急广播", description: "循环播放疏散引导广播" }),
+        evalNoJson(),
+      ],
+      handling_security: [
+        narrativeJson("保安组封锁东侧楼梯并引导疏散。"),
+        narrativeJson("广播引导后疏散加快。"),
+      ],
+      handling_medical: [narrativeJson("医务组待命评估。")],
+      handling_logistics: [narrativeJson("首次断电失败。"), narrativeJson("重试完成断电。")],
+    });
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+
+    const seenStatuses: string[] = [];
+    for (let i = 0; i < 200 && runner.status !== "paused"; i++) {
+      realNow.t += 1_000;
+      await runner.tick();
+      if (runner.status) seenStatuses.push(runner.status);
+    }
+    expect(runner.status).toBe("paused");
+    expect(seenStatuses).not.toContain("awaiting_confirmation");
+
+    // 方案与加派建议均标记 auto 采纳(requires_confirmation=0);评估结论节点同类型但不需确认
+    const nodes = listTimelineByDrill(db, drillId);
+    const dispatchNodes = nodes.filter((n) => n.node_type === "dispatch");
+    expect(dispatchNodes.some((n) => n.title.includes("任务方案"))).toBe(true);
+    expect(dispatchNodes.some((n) => n.title.includes("重新调度建议"))).toBe(true);
+    expect(dispatchNodes.every((n) => n.requires_confirmation === 0)).toBe(true);
+    expect(nodes.some((n) => n.node_type === "operator_action")).toBe(false);
+
+    // 加派任务同样执行并完成
+    const tasks = listTasksByDrill(db, drillId);
+    expect(tasks).toHaveLength(4);
+    expect(tasks.every((t) => t.status === "done")).toBe(true);
+    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    db.close();
+  });
+
+  it("失败重试两次仍失败:任务终态 failed,事件仍推进 controlled", async () => {
+    const db = openDatabase(":memory:");
+    // seed 27:序号 1 的医务任务两次尝试均失败(规则随机流固化)
+    const model = new ScriptedModel({
+      perception: [
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+      ],
+      command: [commandJson("III"), planJson(), evalNoJson(), evalNoJson(), evalNoJson()],
+      handling_security: [narrativeJson("保安组疏导围观学生。")],
+      handling_medical: [narrativeJson("首次急救评估未完成。"), narrativeJson("重试仍未完成,等待支援。")],
+      handling_logistics: [narrativeJson("后勤组运送担架到位。")],
+    });
+    const realNow = { t: Date.parse("2026-11-08T02:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 27, speed: 60, autoConfirm: true });
+    await driveUntilNotRunning(runner, realNow);
+
+    expect(runner.status).toBe("paused");
+    const tasks = listTasksByDrill(db, drillId);
+    const medical = tasks.find((t) => t.role === "medical")!;
+    expect(medical.status).toBe("failed");
+    const result = JSON.parse(medical.result!);
+    expect(result.attempts).toBe(2);
+    expect(result.success).toBe(false);
+    // 其余任务不受失败影响,事件以受控收尾
+    expect(tasks.filter((t) => t.status === "done")).toHaveLength(2);
+    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    const feedbacks = listTimelineByDrill(db, drillId).filter((n) => n.node_type === "feedback");
+    expect(feedbacks.filter((n) => n.title.includes("医务"))).toHaveLength(2);
+    db.close();
+  });
+
+  it("处置智能体坏输出:规则默认反馈 + anomaly 节点,不阻塞其他角色", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+      ],
+      command: [commandJson("III"), planJson(), evalNoJson(), evalNoJson()],
+      handling_security: [{ badJson: true }, { badJson: true }],
+      handling_medical: [narrativeJson("医务组完成现场急救评估。")],
+      handling_logistics: [narrativeJson("后勤组器材运送到位。")],
+    });
+    const realNow = { t: Date.parse("2026-11-08T02:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60, autoConfirm: true });
+    await driveUntilNotRunning(runner, realNow);
+
+    // 推演不中断:全部任务终态,事件受控
+    expect(runner.status).toBe("paused");
+    const tasks = listTasksByDrill(db, drillId);
+    expect(tasks.every((t) => t.status === "done")).toBe(true);
+    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+
+    // 保安角色降级:默认叙述 + anomaly 节点;其他角色叙述正常
+    const nodes = listTimelineByDrill(db, drillId);
+    const securityFeedback = nodes.find((n) => n.node_type === "feedback" && n.title.includes("保安"))!;
+    expect(JSON.parse(securityFeedback.detail).output.narrative).toContain("规则默认叙述");
+    const anomaly = nodes.find(
+      (n) => n.node_type === "anomaly" && n.phase === "handling" && n.title.includes("保安"),
+    );
+    expect(anomaly).toBeDefined();
+    expect(nodes.find((n) => n.node_type === "feedback" && n.title.includes("医务"))!).toBeDefined();
+    expect(nodes.find((n) => n.node_type === "feedback" && n.title.includes("后勤"))!).toBeDefined();
+    db.close();
+  });
+
+  it("三角色并行扇出:同批到期任务的模型调用并发执行(批耗时≈单角色而非累加)", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [perceptionJson(), perceptionJson(), perceptionJson()],
+      command: [commandJson("II"), planJson(), evalNoJson(), evalNoJson()],
+      // 每角色首次响应挂起 120ms 后返回空对象(坏输出),第二次立即成功:单角色净耗时 ≈120ms
+      handling_security: [{ hangMs: 120 }, narrativeJson("保安完成")],
+      handling_medical: [{ hangMs: 120 }, narrativeJson("医务完成")],
+      handling_logistics: [{ hangMs: 120 }, narrativeJson("后勤完成")],
+    });
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+
+    // 三任务到期时刻(255/274/297s)落在同一 tick(offset 300):Send 扇出应并发调用三角色
+    let maxTickMs = 0;
+    for (let i = 0; i < 200 && runner.status !== "paused"; i++) {
+      realNow.t += 1_000;
+      const startedAt = Date.now();
+      await runner.tick();
+      maxTickMs = Math.max(maxTickMs, Date.now() - startedAt);
+    }
+    expect(runner.status).toBe("paused");
+    // 串行执行三角色需 ≥360ms;并发应显著低于该下限
+    expect(maxTickMs).toBeLessThan(300);
+    const roles = listTimelineByDrill(db, drillId)
+      .filter((n) => n.node_type === "feedback")
+      .map((n) => n.actor);
+    expect(roles).toEqual(expect.arrayContaining(["security_agent", "medical_agent", "logistics_agent"]));
+    db.close();
+  });
+
+  it("操作员拒绝加派:不加任务,记录 reject,推演继续收尾", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+        perceptionJson({ location: "操场西侧跑道", eventType: "medical_emergency" }),
+      ],
+      command: [
+        commandJson("III"),
+        planJson(),
+        evalAddJson({ role: "logistics", title: "增派担架转运", description: "增加一副担架与转运人员" }),
+        evalNoJson(),
+      ],
+      handling_security: [narrativeJson("保安组疏导围观学生。")],
+      handling_medical: [narrativeJson("医务组完成急救评估。")],
+      handling_logistics: [narrativeJson("后勤组器材到位。")],
+    });
+    const realNow = { t: Date.parse("2026-11-08T02:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60 });
+
+    await driveUntilNotRunning(runner, realNow);
+    await runner.confirmGrading({});
+    await driveUntilNotRunning(runner, realNow);
+    await runner.confirmDispatch({}); // 初始方案
+    await driveUntilNotRunning(runner, realNow); // → 加派确认点
+    expect(runner.status).toBe("awaiting_confirmation");
+
+    // 拒绝加派:提交空清单
+    const rejected = await runner.confirmDispatch({ tasks: [] });
+    expect(rejected.dispatchedCount).toBe(0);
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("paused");
+
+    // 未新增任务;拒绝动作留痕
+    expect(listTasksByDrill(db, drillId)).toHaveLength(3);
+    const rejectNode = listTimelineByDrill(db, drillId)
+      .filter((n) => n.node_type === "operator_action")
+      .find((n) => n.title.includes("拒绝"))!;
+    expect(JSON.parse(rejectNode.detail).action).toBe("reject");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    db.close();
+  });
+});
+
+/** 读取时间线节点 detail 并解析(JSON) */
+function getTimelineDetail(db: ReturnType<typeof openDatabase>, nodeId: string): Record<string, unknown> {
+  const node = db.prepare("SELECT detail FROM timeline_nodes WHERE id = ?").get(nodeId) as {
+    detail: string;
+  };
+  return JSON.parse(node.detail);
+}

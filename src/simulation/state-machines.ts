@@ -42,6 +42,13 @@ export type NotificationStatus =
 
 export type AgentRole = "security" | "medical" | "logistics";
 
+/** 处置角色显示词汇(与 GLOSSARY 同源:保安 / 医务 / 后勤) */
+export const ROLE_LABELS: Record<AgentRole, string> = {
+  security: "保安",
+  medical: "医务",
+  logistics: "后勤",
+};
+
 /** 信号状态(无流转规则,由感知流程推进) */
 export type SignalStatus = "new" | "processing" | "reported" | "ignored";
 

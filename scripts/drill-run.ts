@@ -8,11 +8,24 @@ import readline from "node:readline/promises";
 import { ChatDeepSeek } from "@langchain/deepseek";
 import { ScriptedModel, wrapLangChain } from "../src/agents/model";
 import { getDb } from "../src/db/client";
-import { listSignalsByDrill, listTimelineByDrill, getDrill, getEventByDrillId } from "../src/db/queries";
+import {
+  getGraphRunByDrillId,
+  listSignalsByDrill,
+  listTasksByDrill,
+  listTimelineByDrill,
+  getDrill,
+  getEventByDrillId,
+} from "../src/db/queries";
 import { formatSimClock } from "../src/simulation/clock";
 import { SCENARIOS } from "../src/simulation/scenarios";
 import { DrillRunner } from "../src/runner/drill-runner";
-import { SEVERITY_LABELS, type DrillStatus, type EventSeverity } from "../src/simulation/state-machines";
+import type { TaskPlanItem } from "../src/simulation/task-rules";
+import {
+  ROLE_LABELS,
+  SEVERITY_LABELS,
+  type DrillStatus,
+  type EventSeverity,
+} from "../src/simulation/state-machines";
 import type { TimelineNodeRow } from "../src/db/types";
 import { DEMO_SCRIPTS } from "./demo-scripts";
 
@@ -85,6 +98,8 @@ function loadEnvLocal(): void {
 const NODE_ICONS: Record<string, string> = {
   signal: "📡",
   grading: "⚑",
+  dispatch: "📋",
+  feedback: "✅",
   anomaly: "⚠️ ",
   status_change: "⏸️ ",
   operator_action: "👤",
@@ -136,14 +151,73 @@ async function main(): Promise<void> {
   });
   simOriginMs = JSON.parse(getDrill(db, drillId)!.clock_state).simOrigin as number;
 
-  // tick 循环:关键节点暂停等待操作员确认,确认后继续;段末自动暂停后 CLI 收尾
-  let point = await runUntilDecisionPoint(runner);
-  while (point === "awaiting_confirmation") {
-    const decision = await promptGradingConfirmation(db, drillId);
-    await runner.confirmGrading(decision);
-    point = await runUntilDecisionPoint(runner);
+  // tick 循环:关键节点暂停等待操作员确认(定级/任务方案/加派),确认后继续;段末自动暂停后 CLI 收尾
+  const reader = new LineReader();
+  try {
+    let point = await runUntilDecisionPoint(runner);
+    while (point === "awaiting_confirmation") {
+      const pending = readPendingConfirmation(db, drillId);
+      if (pending === "grading") {
+        await runner.confirmGrading(await promptGradingConfirmation(reader, db, drillId));
+      } else {
+        await runner.confirmDispatch(await promptDispatchConfirmation(reader, db, drillId));
+      }
+      point = await runUntilDecisionPoint(runner);
+    }
+  } finally {
+    reader.close();
   }
   printSummary(db, drillId);
+}
+
+/**
+ * 行缓冲输入读取器:始终监听输入行(避免闲置期丢行),提示时优先消费缓冲;
+ * 输入结束(EOF)时以空行应答等待中的提示,保证管道/交互两种模式都稳定。
+ */
+class LineReader {
+  private readonly rl = readline.createInterface({ input: process.stdin });
+  private readonly waiters: Array<(line: string) => void> = [];
+  private readonly buffered: string[] = [];
+  private closed = false;
+
+  constructor() {
+    this.rl.on("line", (line) => {
+      const resolve = this.waiters.shift();
+      if (resolve) resolve(line);
+      else this.buffered.push(line);
+    });
+    this.rl.on("close", () => {
+      this.closed = true;
+      for (const resolve of this.waiters.splice(0)) resolve("");
+    });
+  }
+
+  question(prompt: string): Promise<string> {
+    return new Promise((resolve) => {
+      process.stdout.write(prompt);
+      const buffered = this.buffered.shift();
+      if (buffered !== undefined) {
+        resolve(buffered);
+      } else if (this.closed) {
+        resolve("");
+      } else {
+        this.waiters.push(resolve);
+      }
+    });
+  }
+
+  close(): void {
+    this.rl.close();
+  }
+}
+
+/** 当前等待确认的关键节点类型(薄读取层:从 graph_runs 快照判断) */
+function readPendingConfirmation(db: ReturnType<typeof getDb>, drillId: string): "grading" | "dispatch" {
+  const state = JSON.parse(getGraphRunByDrillId(db, drillId)!.state) as {
+    grading?: { status?: string };
+    dispatch?: { status?: string };
+  };
+  return state.grading?.status === "awaiting_confirmation" ? "grading" : "dispatch";
 }
 
 /** tick 循环推进到决策点:返回离开 running 时的演练状态(等待确认 / 段末暂停 / 终态) */
@@ -166,6 +240,7 @@ function runUntilDecisionPoint(runner: DrillRunner): Promise<DrillStatus | null>
 
 /** 决策坞(CLI 版):展示建议等级与理由,回车确认或输入 I/II/III/IV 调整 */
 async function promptGradingConfirmation(
+  reader: LineReader,
   db: ReturnType<typeof getDb>,
   drillId: string,
 ): Promise<{ severity?: EventSeverity }> {
@@ -181,26 +256,87 @@ async function promptGradingConfirmation(
   console.log(`  理由:${detail.output.reasoning}`);
   console.log("");
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    for (;;) {
-      const answer = (
-        await rl.question("请操作:直接回车 = 确认建议等级;或输入 I / II / III / IV 调整等级后继续:")
-      ).trim()
-        .toUpperCase()
-        .replace("Ⅰ", "I")
-        .replace("Ⅱ", "II")
-        .replace("Ⅲ", "III")
-        .replace("Ⅳ", "IV");
-      if (answer === "") return {};
-      if (["I", "II", "III", "IV"].includes(answer)) {
-        return { severity: answer as EventSeverity };
-      }
-      console.log("无效输入:请直接回车,或输入 I / II / III / IV");
+  for (;;) {
+    const answer = (
+      await reader.question("请操作:直接回车 = 确认建议等级;或输入 I / II / III / IV 调整等级后继续:")
+    ).trim()
+      .toUpperCase()
+      .replace("Ⅰ", "I")
+      .replace("Ⅱ", "II")
+      .replace("Ⅲ", "III")
+      .replace("Ⅳ", "IV");
+    if (answer === "") return {};
+    if (["I", "II", "III", "IV"].includes(answer)) {
+      return { severity: answer as EventSeverity };
     }
-  } finally {
-    rl.close();
+    console.log("无效输入:请直接回车,或输入 I / II / III / IV");
   }
+}
+
+const ROLE_KEYS: Record<string, string> = Object.fromEntries(
+  Object.entries(ROLE_LABELS).map(([key, label]) => [label, key]),
+);
+
+/** 决策坞(CLI 版):展示任务方案/加派清单,支持就地增删改派后确认 */
+async function promptDispatchConfirmation(
+  reader: LineReader,
+  db: ReturnType<typeof getDb>,
+  drillId: string,
+): Promise<{ tasks?: TaskPlanItem[] }> {
+  const state = JSON.parse(getGraphRunByDrillId(db, drillId)!.state) as {
+    dispatch: { kind: "initial" | "redispatch"; proposedTasks: TaskPlanItem[] };
+  };
+  const dispatch = state.dispatch;
+  const kindLabel = dispatch.kind === "initial" ? "任务方案确认" : "重新调度 · 加派确认";
+  const tasks: TaskPlanItem[] = dispatch.proposedTasks.map((t) => ({ ...t }));
+
+  for (;;) {
+    console.log("");
+    console.log(`⚑ 决策坞 · ${kindLabel}(演练已暂停,模拟时钟停走)`);
+    tasks.forEach((t, i) => {
+      console.log(`  ${i + 1}. [${ROLE_LABELS[t.role] ?? t.role}] ${t.title} —— ${t.description}`);
+    });
+    if (tasks.length === 0) console.log("  (清单为空)");
+    if (dispatch.kind === "redispatch") {
+      console.log("  说明:回车确认当前清单;清单为空时回车 = 拒绝加派,维持原任务");
+    }
+    const answer = (
+      await reader.question("回车 = 确认执行;-<序号> 删除 / r<序号> <保安|医务|后勤> 改派 / t<序号> <新标题> / d<序号> <新说明>:")
+    ).trim();
+    if (answer === "") {
+      if (dispatch.kind === "initial" && tasks.length === 0) {
+        console.log("初始任务方案至少需要 1 项任务,不能为空");
+        continue;
+      }
+      break;
+    }
+    const m = answer.match(/^(?:-(\d+)|r(\d+)\s+(\S+)|t(\d+)\s+(.+)|d(\d+)\s+(.+))$/);
+    if (!m) {
+      console.log("无法识别的指令,示例:-2 / r2 医务 / t3 新标题 / d1 新说明");
+      continue;
+    }
+    const idx = Number(m[1] ?? m[2] ?? m[4] ?? m[6]) - 1;
+    if (idx < 0 || idx >= tasks.length) {
+      console.log("序号越界");
+      continue;
+    }
+    if (m[1] !== undefined) {
+      tasks.splice(idx, 1);
+    } else if (m[3] !== undefined) {
+      const role = ROLE_KEYS[m[3]] ?? (m[3] in ROLE_LABELS ? m[3] : undefined);
+      if (!role) {
+        console.log("角色只能是 保安 / 医务 / 后勤");
+        continue;
+      }
+      tasks[idx].role = role as TaskPlanItem["role"];
+    } else if (m[5] !== undefined) {
+      tasks[idx].title = m[5];
+    } else {
+      tasks[idx].description = m[7]!;
+    }
+  }
+  const unchanged = JSON.stringify(tasks) === JSON.stringify(dispatch.proposedTasks);
+  return unchanged ? {} : { tasks };
 }
 
 function createDeepSeek(): ChatDeepSeek {
@@ -216,6 +352,7 @@ function printSummary(db: ReturnType<typeof getDb>, drillId: string): void {
   const signals = listSignalsByDrill(db, drillId);
   const event = getEventByDrillId(db, drillId);
   const nodes = listTimelineByDrill(db, drillId);
+  const tasks = listTasksByDrill(db, drillId);
   console.log("");
   console.log("── 推演摘要(模拟演练)────────────────");
   console.log(`演练 ID:${drillId}`);
@@ -225,9 +362,14 @@ function printSummary(db: ReturnType<typeof getDb>, drillId: string): void {
       : "未定";
     console.log(`事件:${event.title}(status=${event.status},等级 ${severityLabel})`);
   }
-  console.log(`信号:${signals.length} 条,时间线节点:${nodes.length} 个`);
-  console.log(`下一步:处置执行智能体接入后,恢复演练进入处置阶段(路线下一 ticket)`);
-  process.exit(0);
+  const byStatus = tasks.reduce<Record<string, number>>((acc, t) => {
+    acc[t.status] = (acc[t.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const taskSummary = Object.entries(byStatus).map(([s, n]) => `${s}×${n}`).join(" ");
+  console.log(`信号:${signals.length} 条,任务:${tasks.length} 项(${taskSummary}),时间线节点:${nodes.length} 个`);
+  console.log(`下一步:通知发布智能体接入后,恢复演练进入通知阶段(路线下一 ticket)`);
+  process.exitCode = 0; // 不用 process.exit:非 TTY 下会截断异步 stdout 缓冲
 }
 
 void main().catch((error) => {

@@ -2,9 +2,15 @@
 // 表结构见 migrations.ts,行类型见 types.ts
 
 import { randomUUID } from "node:crypto";
-import type { DrillStatus, EventSeverity, SignalStatus } from "../simulation/state-machines";
+import type {
+  DrillStatus,
+  EventSeverity,
+  EventStatus,
+  SignalStatus,
+  TaskStatus,
+} from "../simulation/state-machines";
 import type { Db } from "./client";
-import type { DrillRow, EventRow, GraphRunRow, SignalRow, TimelineNodeRow } from "./types";
+import type { DrillRow, EventRow, GraphRunRow, SignalRow, TaskRow, TimelineNodeRow } from "./types";
 
 // —— 演练 ——
 
@@ -131,6 +137,65 @@ export function updateEventGrading(db: Db, id: string, severity: EventSeverity):
     new Date().toISOString(),
     id,
   );
+}
+
+/** 事件状态推进(状态机校验由调用方负责) */
+export function updateEventStatus(db: Db, id: string, status: EventStatus): void {
+  db.prepare("UPDATE events SET status = ?, updated_at = ? WHERE id = ?").run(
+    status,
+    new Date().toISOString(),
+    id,
+  );
+}
+
+// —— 任务 ——
+
+export interface NewTask {
+  drill_id: string;
+  event_id: string;
+  role: string;
+  title: string;
+  description: string;
+  dispatched_sim_time: string;
+}
+
+export function insertTask(db: Db, row: NewTask): TaskRow {
+  const task: TaskRow = {
+    id: randomUUID(),
+    ...row,
+    status: "pending_confirmation",
+    result: null,
+    started_sim_time: row.dispatched_sim_time,
+    completed_sim_time: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  db.prepare(
+    `INSERT INTO tasks (id, drill_id, event_id, role, title, description, status, dispatched_sim_time, started_sim_time)
+     VALUES (@id, @drill_id, @event_id, @role, @title, @description, @status, @dispatched_sim_time, @started_sim_time)`,
+  ).run(task);
+  return task;
+}
+
+export function listTasksByDrill(db: Db, drillId: string): TaskRow[] {
+  return db
+    .prepare("SELECT * FROM tasks WHERE drill_id = ? ORDER BY created_at, rowid")
+    .all(drillId) as TaskRow[];
+}
+
+export function updateTaskStatus(db: Db, id: string, status: TaskStatus): void {
+  db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(
+    status,
+    new Date().toISOString(),
+    id,
+  );
+}
+
+/** 任务终态:写入执行结果 JSON(耗时/资源/成败/叙述)与完成时间 */
+export function completeTask(db: Db, id: string, status: TaskStatus, result: string, completedSimTime: string): void {
+  db.prepare(
+    "UPDATE tasks SET status = ?, result = ?, completed_sim_time = ?, updated_at = ? WHERE id = ?",
+  ).run(status, result, completedSimTime, new Date().toISOString(), id);
 }
 
 // —— 时间线 ——
