@@ -118,3 +118,17 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 - 不伪造传感器数据来源、模型调用结果、应急结果或测试通过记录。
 - 真实通知、真实设备控制与实际应急指挥不属于默认范围，必须经过独立安全设计与人工审批。
 
+## Agent skills
+
+### Issue tracker
+
+问题以本地 Markdown 文件形式记录在 `.scratch/` 目录下。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认五个分诊标签（needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix）。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文布局：根目录 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。
+
