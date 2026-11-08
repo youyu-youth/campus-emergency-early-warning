@@ -29,6 +29,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 ## 编码规范和使用习惯
 
 - 技术文档查询时，使用 context7 mcp 来查询 文档
+- 在涉及到功能页面或者界面的开发，需要使用 $impeccable shape skill 进行开发和用户讨论
 
 
 
@@ -131,4 +132,3 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 ### Domain docs
 
 单上下文布局：根目录 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。
-
