@@ -17,6 +17,7 @@ import type {
   EventRow,
   GraphRunRow,
   NotificationRow,
+  ReportRow,
   SignalRow,
   TaskRow,
   TimelineNodeRow,
@@ -67,6 +68,16 @@ export function getActiveDrills(db: Db): DrillRow[] {
   return db
     .prepare("SELECT * FROM drills WHERE status IN ('running', 'awaiting_confirmation') ORDER BY created_at")
     .all() as DrillRow[];
+}
+
+/** 演练收尾终态:写入规则评分与结束时刻(状态机校验由调用方负责) */
+export function finishDrill(db: Db, id: string, score: number, endedAt: string): void {
+  db.prepare("UPDATE drills SET score = ?, ended_at = ?, updated_at = ? WHERE id = ?").run(
+    score,
+    endedAt,
+    new Date().toISOString(),
+    id,
+  );
 }
 
 // —— 信号 ——
@@ -153,6 +164,15 @@ export function updateEventGrading(db: Db, id: string, severity: EventSeverity):
 export function updateEventStatus(db: Db, id: string, status: EventStatus): void {
   db.prepare("UPDATE events SET status = ?, updated_at = ? WHERE id = ?").run(
     status,
+    new Date().toISOString(),
+    id,
+  );
+}
+
+/** 事件关闭终态:同时落关闭(模拟)时刻 */
+export function closeEvent(db: Db, id: string, resolvedSimTime: string): void {
+  db.prepare("UPDATE events SET status = 'closed', resolved_sim_time = ?, updated_at = ? WHERE id = ?").run(
+    resolvedSimTime,
     new Date().toISOString(),
     id,
   );
@@ -262,8 +282,37 @@ export function finishNotification(
   ).run(status, delivery, publishedSimTime, new Date().toISOString(), id);
 }
 
-// —— 时间线 ——
+// —— 复盘报告 ——
 
+export interface NewReport {
+  drill_id: string;
+  timeline_summary: string;
+  metrics: string;
+  problems: string;
+  improvements: string;
+  source: "model" | "degraded";
+}
+
+export function insertReport(db: Db, row: NewReport): ReportRow {
+  const report: ReportRow = {
+    id: randomUUID(),
+    ...row,
+    created_at: new Date().toISOString(),
+  };
+  db.prepare(
+    `INSERT INTO reports (id, drill_id, timeline_summary, metrics, problems, improvements, source)
+     VALUES (@id, @drill_id, @timeline_summary, @metrics, @problems, @improvements, @source)`,
+  ).run(report);
+  return report;
+}
+
+export function getReportByDrillId(db: Db, drillId: string): ReportRow | undefined {
+  return db
+    .prepare("SELECT * FROM reports WHERE drill_id = ? ORDER BY created_at LIMIT 1")
+    .get(drillId) as ReportRow | undefined;
+}
+
+// —— 时间线 ——
 export interface NewTimelineNode {
   drill_id: string;
   event_id?: string | null;

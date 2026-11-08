@@ -114,4 +114,20 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_graph_runs_drill ON graph_runs(drill_id);
     `,
   },
+  {
+    name: "0002_reports",
+    sql: `
+      CREATE TABLE IF NOT EXISTS reports (
+        id TEXT PRIMARY KEY,
+        drill_id TEXT NOT NULL REFERENCES drills(id),
+        timeline_summary TEXT NOT NULL,
+        metrics TEXT NOT NULL,
+        problems TEXT NOT NULL,
+        improvements TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_reports_drill ON reports(drill_id);
+    `,
+  },
 ];

@@ -1,7 +1,6 @@
 // 进程内推演运行器(ADR 0001):tick 循环驱动模拟时钟与信号到期,每步落库
-// 当前实现感知段、研判段、处置段与通知段:信号 → 感知上报 → 定级确认 → 任务方案确认 → 三角色并行处置
-// (里程碑演变 + 重新调度评估) → 事件 controlled → 双受众通知确认发布(模拟送达);
-// 通知段完成后自动暂停,等待复盘评估接入(后续路线)
+// 全链路:信号 → 感知上报 → 定级确认 → 任务方案确认 → 三角色并行处置(里程碑演变 + 重新调度评估)
+// → 事件 controlled → 双受众通知确认发布(模拟送达) → 事件 closed → 复盘报告 + 规则评分 → 演练 completed
 
 import {
   TaskPlanItemSchema,
@@ -10,9 +9,12 @@ import {
   type RedispatchInput,
 } from "../agents/command";
 import type { NotificationInput } from "../agents/notification";
+import type { ReviewInput } from "../agents/review";
 import type { AgentChatModel } from "../agents/model";
 import type { Db } from "../db/client";
 import {
+  closeEvent,
+  finishDrill,
   finishNotification,
   getActiveDrills,
   getDrill,
@@ -50,6 +52,7 @@ import {
   type PublishRecord,
 } from "../graph/notification";
 import { buildPerceptionGraph, type PendingSignal } from "../graph/perception";
+import { buildReviewGraph, type ReviewSnapshot } from "../graph/review";
 import {
   formatSimClock,
   pauseClock,
@@ -66,6 +69,7 @@ import {
   MAX_PUBLISH_ATTEMPTS,
   type NotificationAudience,
 } from "../simulation/delivery-rules";
+import { computeScore, type DrillMetrics } from "../simulation/score-rules";
 import { computeTaskOutcome, MAX_TASK_ATTEMPTS, type TaskPlanItem } from "../simulation/task-rules";
 import {
   DRILL_TRANSITIONS,
@@ -102,7 +106,7 @@ export interface StartDrillInput {
 
 /** graph_runs.state 的快照形状(运行器是唯一写入方,按 phase 演进) */
 export interface DrillRunState {
-  phase: "perception" | "grading" | "handling" | "notification";
+  phase: "perception" | "grading" | "handling" | "notification" | "review";
   eventId: string | null;
   processedSignalIds: string[];
   grading?: GradingSnapshot;
@@ -112,6 +116,8 @@ export interface DrillRunState {
   handling?: HandlingState;
   /** 通知段进度(草稿确认/发布尝试) */
   notification?: NotificationSnapshot;
+  /** 复盘段进度(报告 id;写入即表示复盘图已完成) */
+  review?: ReviewSnapshot;
 }
 
 export class DrillRunner {
@@ -124,6 +130,7 @@ export class DrillRunner {
   private redispatchGraph: ReturnType<typeof buildRedispatchGraph> | null = null;
   private handlingGraph: ReturnType<typeof buildHandlingGraph> | null = null;
   private notificationGraph: ReturnType<typeof buildNotificationGraph> | null = null;
+  private reviewGraph: ReturnType<typeof buildReviewGraph> | null = null;
 
   constructor(private readonly deps: DrillRunnerDeps) {}
 
@@ -227,6 +234,7 @@ export class DrillRunner {
         drillId: drill.id,
         scenarioKey,
         simOriginMs: clock.simOrigin,
+        offsetMs: offset,
         eventId: existingEvent?.id ?? null,
         pendingSignals,
         processedSignalIds: priorState.processedSignalIds,
@@ -471,8 +479,12 @@ export class DrillRunner {
       });
     }
 
-    // 段末:任务全部终态 + 事件已控制 + 里程碑全部写入 → 流入通知段(第 4 步闭环)
-    if (allTerminal && eventStatus === "controlled" && handling.writtenMilestoneOffsets.length >= evolution.length) {
+    // 段末:任务全部终态 + 事件已控制(或已关闭 = 复盘收尾曾被中断) + 里程碑全部写入 → 流入通知段
+    if (
+      allTerminal &&
+      (eventStatus === "controlled" || eventStatus === "closed") &&
+      handling.writtenMilestoneOffsets.length >= evolution.length
+    ) {
       this.writeHandlingState(drill.id, handling);
       await this.stepNotification(drill, clock, offsetMs, nowMs);
       return;
@@ -504,12 +516,12 @@ export class DrillRunner {
       return;
     }
 
-    // 草稿已生成并发布(操作员确认后或 auto):全部终态则段末暂停
+    // 草稿已生成并发布(操作员确认后或 auto):全部终态则流入复盘段收尾
     const snapshot = state.notification;
     if (rows.every((r) => r.status === "published_sim" || r.status === "failed")) {
       snapshot.status = "done";
       this.writeNotificationState(drill.id, snapshot);
-      this.pauseAtPhaseEnd(drill, "notification", clock, offsetMs, nowMs);
+      await this.stepReview(drill, clock, offsetMs, nowMs);
     }
   }
 
@@ -533,7 +545,6 @@ export class DrillRunner {
       ? listTimelineByDrill(db, drill.id).find((n) => n.node_type === "notification")
       : undefined;
     let nodeId = priorNode?.id;
-    let rows = existing;
 
     if (!priorNode) {
       const input: Omit<NotificationInput, "audience"> = {
@@ -563,7 +574,6 @@ export class DrillRunner {
         requiresConfirmation,
       });
       nodeId = result.nodeId!;
-      rows = result.rows;
     }
 
     const snapshot: NotificationSnapshot = {
@@ -584,12 +594,12 @@ export class DrillRunner {
       return;
     }
 
-    // auto 模式:直接发布(失败自动重试一次);全部终态则段末暂停
+    // auto 模式:直接发布(失败自动重试一次);全部终态则流入复盘段收尾
     this.publishNotifications(drill, snapshot, clock.simOrigin, offsetMs, true);
     if (listNotificationsByDrill(db, drill.id).every((r) => r.status === "published_sim" || r.status === "failed")) {
       snapshot.status = "done";
       this.writeNotificationState(drill.id, snapshot);
-      this.pauseAtPhaseEnd(drill, "notification", clock, offsetMs, nowMs);
+      await this.stepReview(drill, clock, offsetMs, nowMs);
     }
   }
 
@@ -1099,11 +1109,12 @@ export class DrillRunner {
     offsetMs: number,
     nowMs: number,
     content: { title: string; detail: Record<string, unknown> },
+    phase: "handling" | "review" = "handling",
   ): void {
     const node = insertTimelineNode(this.deps.db, {
       drill_id: drillId,
       event_id: eventId,
-      phase: "handling",
+      phase,
       node_type: "status_change",
       title: content.title,
       detail: JSON.stringify(content.detail),
@@ -1112,6 +1123,11 @@ export class DrillRunner {
       real_time: new Date(nowMs).toISOString(),
     });
     this.deps.onTimelineNode?.(node);
+  }
+
+  /** 演练模拟世界起点(从落库时钟状态读取) */
+  private simOriginOf(drill: DrillRow): number {
+    return (JSON.parse(drill.clock_state) as ClockState).simOrigin;
   }
 
   private writeHandlingState(drillId: string, handling: HandlingState): void {
@@ -1202,31 +1218,146 @@ export class DrillRunner {
     updateEventGrading(this.deps.db, event.id, severity);
   }
 
-  /** 段末自动暂停:通知段完成,等待复盘评估接入(路线下一 ticket) */
-  private pauseAtPhaseEnd(
+  /** 复盘段收尾:事件 closed → 复盘报告(仅基于留存日志)→ 规则评分 → 演练 completed
+   *  幂等:报告已落库时复盘图直接复用(不重复调模型);快照已写而收尾未完成则补齐收尾 */
+  private async stepReview(
     drill: DrillRow,
-    phase: "notification",
     clock: ClockState,
     offsetMs: number,
     nowMs: number,
-  ): void {
+  ): Promise<void> {
     const { db } = this.deps;
-    const status = transition(DRILL_TRANSITIONS, drill.status as DrillStatus, "paused");
+    if (drill.status === "completed") return; // 已收尾(不可重入)
+
+    const event = getEventByDrillId(db, drill.id);
+    if (!event || !event.severity) return;
+
+    // 事件关闭(controlled → closed,经状态机校验),记录关闭(模拟)时刻
+    if (event.status === "controlled") {
+      transition(EVENT_TRANSITIONS, event.status, "closed");
+      closeEvent(db, event.id, simTimeIso(clock.simOrigin, offsetMs));
+      this.emitStatusChange(drill.id, event.id, clock.simOrigin, offsetMs, nowMs, {
+        title: "事件关闭,进入复盘评估",
+        detail: { from: "controlled", to: "closed" },
+      }, "review");
+    }
+
+    // 复盘报告:复盘图幂等(既有报告复用);指标从留存日志只读汇总
+    const input = this.collectReviewInput(drill, event, offsetMs);
+    this.reviewGraph ??= buildReviewGraph({
+      db,
+      model: this.deps.model,
+      now: this.deps.now ?? (() => Date.now()),
+      onTimelineNode: this.deps.onTimelineNode,
+    });
+    const { report } = (await this.reviewGraph.invoke({
+      drillId: drill.id,
+      input,
+      simOriginMs: clock.simOrigin,
+      offsetMs,
+    })).result!;
+
+    // 规则评分 + 演练终态 completed,模拟时钟停走(恢复路径中时钟可能已停,不重复暂停)
+    const metrics = JSON.parse(report.metrics) as DrillMetrics;
+    const score = computeScore(metrics);
+    finishDrill(db, drill.id, score, new Date(nowMs).toISOString());
+    const status = transition(DRILL_TRANSITIONS, drill.status as DrillStatus, "completed");
     updateDrillStatus(db, drill.id, status);
-    updateDrillClock(db, drill.id, JSON.stringify(pauseClock(clock, nowMs)));
-    const node = insertTimelineNode(db, {
+    if (clock.running) {
+      updateDrillClock(db, drill.id, JSON.stringify(pauseClock(clock, nowMs)));
+    }
+    const doneNode = insertTimelineNode(db, {
       drill_id: drill.id,
-      phase,
+      event_id: event.id,
+      phase: "review",
       node_type: "status_change",
-      title: "通知阶段完成,演练自动暂停(等待复盘评估接入)",
-      detail: JSON.stringify({ from: drill.status, to: "paused", reason: "notification_phase_done" }),
+      title: `演练完成,总评分 ${score}(复盘报告 ${report.id})`,
+      detail: JSON.stringify({ from: drill.status, to: "completed", score, reportId: report.id }),
       actor: "drill_runner",
       sim_time: simTimeIso(clock.simOrigin, offsetMs),
       real_time: new Date(nowMs).toISOString(),
     });
-    this.deps.onTimelineNode?.(node);
-    const state = this.readRunState(drill.id);
-    upsertGraphRun(db, drill.id, status, JSON.stringify({ ...state, phase }));
+    this.deps.onTimelineNode?.(doneNode);
+    upsertGraphRun(db, drill.id, status, JSON.stringify({
+      ...this.readRunState(drill.id),
+      phase: "review",
+      review: { status: "done", reportId: report.id },
+    }));
+  }
+
+  /** 从留存日志只读汇总复盘输入:指标条(规则)、时间线、任务结果、通知结果(复盘只基于事实) */
+  private collectReviewInput(
+    drill: DrillRow,
+    event: NonNullable<ReturnType<typeof getEventByDrillId>>,
+    offsetMs: number,
+  ): ReviewInput {
+    const { db } = this.deps;
+    const scenarioKey = drill.scenario_key as ScenarioKey;
+    const scenario = getScenario(scenarioKey);
+    const nodes = listTimelineByDrill(db, drill.id);
+    const tasks = listTasksByDrill(db, drill.id);
+
+    // 时间指标(模拟毫秒,从留存节点推算:发现=首信号检测,上报=事件创建节点,定级=定级节点,关闭=当前)
+    const firstSignal = nodes.find((n) => n.node_type === "signal");
+    const gradingNode = nodes.find((n) => n.node_type === "grading");
+    const detectedMs = Date.parse(event.detected_sim_time ?? "");
+    const reportedMs = firstSignal ? Date.parse(firstSignal.sim_time) : detectedMs;
+    const gradedMs = gradingNode ? Date.parse(gradingNode.sim_time) : reportedMs;
+    const closedMs = Date.parse(simTimeIso(this.simOriginOf(drill), offsetMs));
+
+    const resourceTotal = tasks.reduce((sum, t) => {
+      if (!t.result) return sum;
+      const resources = (JSON.parse(t.result).resources ?? {}) as Record<string, number>;
+      return sum + Object.values(resources).reduce((a, b) => a + b, 0);
+    }, 0);
+
+    return {
+      event: {
+        type: event.type as ReviewInput["event"]["type"],
+        title: event.title,
+        location: event.location,
+        severity: event.severity as ReviewInput["event"]["severity"],
+        detectedSimTime: event.detected_sim_time ?? "",
+      },
+      scenarioKey,
+      scenarioName: scenario.name,
+      metrics: {
+        totalDurationMs: Math.max(closedMs - detectedMs, 0),
+        reportDurationMs: Math.max(reportedMs - detectedMs, 0),
+        gradingDurationMs: Math.max(gradedMs - reportedMs, 0),
+        taskDone: tasks.filter((t) => t.status === "done").length,
+        taskTotal: tasks.length,
+        resourceTotal,
+      },
+      timeline: nodes.map((n) => ({
+        seq: n.seq,
+        phase: n.phase,
+        nodeType: n.node_type,
+        title: n.title,
+        simTimeLabel: n.sim_time,
+      })),
+      tasks: tasks.map((t) => {
+        const result = t.result ? (JSON.parse(t.result) as { success: boolean | null; attempts: number }) : null;
+        return {
+          role: t.role,
+          title: t.title,
+          status: t.status,
+          success: result?.success ?? null,
+          attempts: result?.attempts ?? 0,
+        };
+      }),
+      notifications: listNotificationsByDrill(db, drill.id).map((n) => {
+        const delivery = n.delivery ? (JSON.parse(n.delivery) as { delivered?: number; total?: number }) : null;
+        return {
+          audience: n.audience as ReviewInput["notifications"][number]["audience"],
+          title: n.title,
+          status: n.status,
+          delivered: delivery?.delivered ?? null,
+          total: delivery?.total ?? null,
+        };
+      }),
+      anomalyCount: nodes.filter((n) => n.node_type === "anomaly").length,
+    };
   }
 
   /** 进入确认缝:演练转 awaiting_confirmation、模拟时钟同步停走、快照落库 */

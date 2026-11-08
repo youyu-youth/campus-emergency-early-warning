@@ -10,6 +10,7 @@ import { ScriptedModel, wrapLangChain } from "../src/agents/model";
 import { getDb } from "../src/db/client";
 import {
   getGraphRunByDrillId,
+  getReportByDrillId,
   listNotificationsByDrill,
   listSignalsByDrill,
   listTasksByDrill,
@@ -18,6 +19,7 @@ import {
   getEventByDrillId,
 } from "../src/db/queries";
 import { formatSimClock } from "../src/simulation/clock";
+import type { DrillMetrics } from "../src/simulation/score-rules";
 import { SCENARIOS } from "../src/simulation/scenarios";
 import { DrillRunner } from "../src/runner/drill-runner";
 import { AUDIENCE_LABELS, type DeliveryStats } from "../src/simulation/delivery-rules";
@@ -154,7 +156,7 @@ async function main(): Promise<void> {
   });
   simOriginMs = JSON.parse(getDrill(db, drillId)!.clock_state).simOrigin as number;
 
-  // tick 循环:关键节点暂停等待操作员确认(定级/任务方案/加派),确认后继续;段末自动暂停后 CLI 收尾
+  // tick 循环:关键节点暂停等待操作员确认(定级/任务方案/加派/通知),确认后继续;复盘收尾达终态后 CLI 打印摘要
   const reader = new LineReader();
   try {
     let point = await runUntilDecisionPoint(runner);
@@ -428,8 +430,36 @@ function printSummary(db: ReturnType<typeof getDb>, drillId: string): void {
       console.log(`  通知[${label}] ${n.title}:送达 ${delivery.delivered}/${delivery.total}(失败 ${delivery.failed})`);
     }
   }
-  console.log(`下一步:复盘评估智能体接入后,恢复演练生成复盘报告(路线下一 ticket)`);
+  printReviewSummary(db, drillId);
   process.exitCode = 0; // 不用 process.exit:非 TTY 下会截断异步 stdout 缓冲
+}
+
+/** 复盘摘要:总评分 + 指标条数据 + 问题分析 + 改进建议(全部来自落库报告,薄打印层) */
+function printReviewSummary(db: ReturnType<typeof getDb>, drillId: string): void {
+  const drill = getDrill(db, drillId);
+  const report = getReportByDrillId(db, drillId);
+  if (!report) {
+    console.log(`演练状态:${drill?.status}(无复盘报告)`);
+    return;
+  }
+  const seconds = (ms: number) => `${Math.round(ms / 1000)}s`;
+  const metrics = JSON.parse(report.metrics) as DrillMetrics;
+  const problems = JSON.parse(report.problems) as Array<{ title: string; detail: string }>;
+  const improvements = JSON.parse(report.improvements) as Array<{ title: string; detail: string }>;
+  console.log("");
+  console.log("── 复盘报告(模拟演练)────────────────");
+  console.log(`总评分:${drill?.score ?? "?"} / 100(${report.source === "model" ? "复盘智能体生成" : "降级规则骨架"})`);
+  console.log(
+    `指标条:总时长 ${seconds(metrics.totalDurationMs)} · 发现→上报 ${seconds(metrics.reportDurationMs)} · 定级 ${seconds(metrics.gradingDurationMs)} · 任务完成 ${metrics.taskDone}/${metrics.taskTotal} · 资源消耗 ${metrics.resourceTotal} 单位`,
+  );
+  if (problems.length > 0) {
+    console.log("问题分析:");
+    for (const p of problems) console.log(`  ⚠ ${p.title} —— ${p.detail}`);
+  } else {
+    console.log("问题分析:无(全程未发现明显问题)");
+  }
+  console.log("改进建议:");
+  for (const i of improvements) console.log(`  ▸ ${i.title} —— ${i.detail}`);
 }
 
 void main().catch((error) => {

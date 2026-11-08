@@ -98,3 +98,19 @@ export interface GraphRunRow {
   state: string; // JSON：图共享状态快照
   updated_at: string;
 }
+
+export interface ReportRow {
+  id: string;
+  drill_id: string;
+  /** JSON：时间线归纳 Array<{ nodeSeq, summary }> */
+  timeline_summary: string;
+  /** JSON：指标条 DrillMetrics(规则计算) */
+  metrics: string;
+  /** JSON：问题分析 Array<{ nodeSeq?, title, detail }> */
+  problems: string;
+  /** JSON：改进建议 Array<{ title, detail }> */
+  improvements: string;
+  /** 报告来源:model | degraded */
+  source: string;
+  created_at: string;
+}

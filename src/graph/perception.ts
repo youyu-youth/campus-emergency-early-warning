@@ -23,6 +23,8 @@ export const PerceptionGraphState = Annotation.Root({
   scenarioKey: Annotation<ScenarioKey>,
   /** 模拟世界起点(epoch 毫秒),用于把信号偏移落为模拟时间 */
   simOriginMs: Annotation<number>,
+  /** 本次感知完成时的模拟偏移(节点 sim_time 记动作发生时刻,信号检测时刻在 signals.sim_time) */
+  offsetMs: Annotation<number>,
   /** 单事件焦点:首信号创建事件后回填 */
   eventId: Annotation<string | null>({ reducer: (current, update) => update ?? current, default: () => null }),
   /** 本批到期信号(覆盖式) */
@@ -91,7 +93,7 @@ export function buildPerceptionGraph(deps: PerceptionGraphDeps) {
             output: result.output,
           }),
           actor: "monitor_agent",
-          sim_time: simTimeIso(state.simOriginMs, pending.scheduled.offsetMs),
+          sim_time: simTimeIso(state.simOriginMs, state.offsetMs),
           real_time: new Date(now()).toISOString(),
         }),
       );
@@ -110,7 +112,7 @@ export function buildPerceptionGraph(deps: PerceptionGraphDeps) {
               fallback: "重试一次仍失败,已按规则默认解读上报",
             }),
             actor: "monitor_agent",
-            sim_time: simTimeIso(state.simOriginMs, pending.scheduled.offsetMs),
+            sim_time: simTimeIso(state.simOriginMs, state.offsetMs),
             real_time: new Date(now()).toISOString(),
           }),
         );

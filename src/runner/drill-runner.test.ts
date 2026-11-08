@@ -5,6 +5,7 @@ import {
   getDrill,
   getEventByDrillId,
   getGraphRunByDrillId,
+  getReportByDrillId,
   insertSignal,
   listNotificationsByDrill,
   listSignalsByDrill,
@@ -14,6 +15,7 @@ import {
 } from "../db/queries";
 import type { ClockState } from "../simulation/clock";
 import { generateSignalScript } from "../simulation/engine";
+import { computeScore, type DrillMetrics } from "../simulation/score-rules";
 import type { TaskPlanItem } from "../simulation/task-rules";
 import { DrillRunner } from "./drill-runner";
 
@@ -97,9 +99,9 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
     await driveUntilNotRunning(runner, realNow);
 
-    // 演练在研判段完成后自动暂停,落库状态一致
-    expect(runner.status).toBe("paused");
-    expect(getDrill(db, drillId)?.status).toBe("paused");
+    // 05 起通知段后进入复盘收尾:演练跑完全程进入 completed 终态
+    expect(runner.status).toBe("completed");
+    expect(getDrill(db, drillId)?.status).toBe("completed");
 
     // 到期信号按场景脚本 + 种子确定性写入 signals,全部完成感知
     const script = generateSignalScript("fire_alarm", 42);
@@ -111,7 +113,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     // 单事件焦点:仅创建一个事件,auto 全程跑完后事件受控,关联首信号
     const event = getEventByDrillId(db, drillId);
     expect(event).toBeDefined();
-    expect(event!.status).toBe("controlled");
+    expect(event!.status).toBe("closed");
     expect(event!.severity).toBe("II");
     expect(event!.signal_id).toBe(signals[0].id);
     expect(event!.type).toBe("fire_alarm");
@@ -129,10 +131,10 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     expect(signalNodes[0].title).toContain("创建事件");
     expect(signalNodes[1].title).toContain("补充证据");
 
-    // 段末自动暂停记录 status_change 节点,双时间同时落库
-    const pauseNode = nodes.find((n) => n.node_type === "status_change" && n.title.includes("暂停"));
-    expect(pauseNode?.title).toContain("通知");
-    expect(pauseNode?.sim_time).not.toBe(pauseNode?.real_time);
+    // 事件关闭记录 status_change 节点(复盘段),双时间同时落库
+    const closeNode = nodes.find((n) => n.node_type === "status_change" && n.title.includes("事件关闭"));
+    expect(closeNode?.phase).toBe("review");
+    expect(closeNode?.sim_time).not.toBe(closeNode?.real_time);
 
     // 图状态快照写入 graph_runs,数据库可重建推演进度
     const graphRun = getGraphRunByDrillId(db, drillId);
@@ -158,7 +160,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60, autoConfirm: true });
     await driveUntilNotRunning(runner, realNow);
 
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const script = generateSignalScript("medical_emergency", 7);
     expect(listSignalsByDrill(db, drillId)).toHaveLength(script.length);
     // 单事件焦点:两路信号只归并到一个事件
@@ -193,7 +195,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
 
     // 降级不阻塞推演:事件仍以默认解读创建(auto 全程跑完到受控)
     const event = getEventByDrillId(db, drillId)!;
-    expect(event.status).toBe("controlled");
+    expect(event.status).toBe("closed");
     expect(event.title).toContain("感知降级");
     // 每次感知降级记录一个 anomaly 节点(只统计感知段;后续段剧本缺失走各自降级,与本测试无关)
     const anomalies = listTimelineByDrill(db, drillId).filter(
@@ -223,7 +225,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
 
     await inFlight; // 首个 tick 完成(此时只处理了先到期信号的批次)
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     expect(getEventByDrillId(db, runner.drillId!)).toBeDefined();
     db.close();
   });
@@ -362,15 +364,15 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
       confirmedRealTime: new Date(confirmedAt).toISOString(),
     });
 
-    // 确认任务方案 → 处置段完成 → 通知确认点(剧本缺失走降级默认文案)→ 确认发布 → 段末暂停
+    // 确认任务方案 → 处置段完成 → 通知确认点(剧本缺失走降级默认文案)→ 确认发布 → 复盘收尾
     await runner.confirmDispatch({});
     await driveUntilNotRunning(runner, realNow);
     expect(runner.status).toBe("awaiting_confirmation");
     await runner.confirmNotification();
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const finalNodes = listTimelineByDrill(db, drillId);
-    expect(finalNodes.find((n) => n.node_type === "status_change" && n.title.includes("暂停"))!.title).toContain("通知");
+    expect(finalNodes.find((n) => n.node_type === "status_change" && n.title.includes("事件关闭"))!.phase).toBe("review");
     db.close();
   });
 
@@ -397,7 +399,7 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
     expect(runner.status).toBe("awaiting_confirmation");
     await runner.confirmNotification();
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     expect(getEventByDrillId(db, drillId)!.severity).toBe("IV");
 
     const operatorNode = listTimelineByDrill(db, drillId).find((n) => n.node_type === "operator_action")!;
@@ -424,12 +426,12 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
 
     // 逐 tick 记录状态:全程不得进入 awaiting_confirmation
     const seenStatuses: string[] = [];
-    for (let i = 0; i < 200 && runner.status !== "paused"; i++) {
+    for (let i = 0; i < 200 && runner.status === "running"; i++) {
       realNow.t += 1_000;
       await runner.tick();
       if (runner.status) seenStatuses.push(runner.status);
     }
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     expect(seenStatuses).not.toContain("awaiting_confirmation");
 
     const nodes = listTimelineByDrill(db, drillId);
@@ -453,10 +455,10 @@ describe("推演运行器 · 研判段定级确认(缝 1)", () => {
     await driveUntilNotRunning(runner, realNow);
 
     // 降级不阻塞:事件按规则默认定级(medium → Ⅲ)并跑完全程
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const event = getEventByDrillId(db, drillId)!;
     expect(event.severity).toBe("III");
-    expect(event.status).toBe("controlled");
+    expect(event.status).toBe("closed");
     const anomaly = listTimelineByDrill(db, drillId).find(
       (n) => n.node_type === "anomaly" && n.phase === "grading",
     );
@@ -561,9 +563,9 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     expect(nodeDetail.publishes.every((p) => p.status === "published_sim" && p.attempt === 1)).toBe(true);
     expect(nodeDetail.confirmation.waitedMs).toBe(6_000);
 
-    // 通知段跑完:暂停、时钟停走
+    // 通知段跑完:进入复盘收尾,演练完成、时钟停走
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     expect((JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState).running).toBe(false);
 
     // 任务:3 项初始 + 1 项加派;logistics 首试失败自动重试后成功(规则+种子)
@@ -593,7 +595,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
 
     // 事件状态机:graded → handling → controlled 全程留痕
     const event = getEventByDrillId(db, drillId)!;
-    expect(event.status).toBe("controlled");
+    expect(event.status).toBe("closed");
     expect(event.severity).toBe("II");
     const statusTitles = nodes.filter((n) => n.node_type === "status_change").map((n) => n.title);
     expect(statusTitles.some((t) => t.includes("事件处置中"))).toBe(true);
@@ -606,7 +608,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
 
     // 图快照:处置段执行簿完整,数据库可重建
     const state = JSON.parse(getGraphRunByDrillId(db, drillId)!.state);
-    expect(state.phase).toBe("notification"); // 通知段完成后段末暂停
+    expect(state.phase).toBe("review"); // 通知段完成后进入复盘收尾
     expect(Object.keys(state.handling.tasks)).toHaveLength(4);
     expect(state.handling.writtenMilestoneOffsets).toHaveLength(3);
     db.close();
@@ -646,7 +648,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     expect(runner.status).toBe("awaiting_confirmation");
     await runner.confirmNotification();
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
 
     const tasks = listTasksByDrill(db, drillId);
     expect(tasks).toHaveLength(2);
@@ -688,12 +690,12 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
 
     const seenStatuses: string[] = [];
-    for (let i = 0; i < 200 && runner.status !== "paused"; i++) {
+    for (let i = 0; i < 200 && runner.status === "running"; i++) {
       realNow.t += 1_000;
       await runner.tick();
       if (runner.status) seenStatuses.push(runner.status);
     }
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     expect(seenStatuses).not.toContain("awaiting_confirmation");
 
     // 方案与加派建议均标记 auto 采纳(requires_confirmation=0);评估结论节点同类型但不需确认
@@ -708,7 +710,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     const tasks = listTasksByDrill(db, drillId);
     expect(tasks).toHaveLength(4);
     expect(tasks.every((t) => t.status === "done")).toBe(true);
-    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
     db.close();
   });
 
@@ -730,7 +732,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 27, speed: 60, autoConfirm: true });
     await driveUntilNotRunning(runner, realNow);
 
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const tasks = listTasksByDrill(db, drillId);
     const medical = tasks.find((t) => t.role === "medical")!;
     expect(medical.status).toBe("failed");
@@ -739,7 +741,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     expect(result.success).toBe(false);
     // 其余任务不受失败影响,事件以受控收尾
     expect(tasks.filter((t) => t.status === "done")).toHaveLength(2);
-    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
     const feedbacks = listTimelineByDrill(db, drillId).filter((n) => n.node_type === "feedback");
     expect(feedbacks.filter((n) => n.title.includes("医务"))).toHaveLength(2);
     db.close();
@@ -763,10 +765,10 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     await driveUntilNotRunning(runner, realNow);
 
     // 推演不中断:全部任务终态,事件受控
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const tasks = listTasksByDrill(db, drillId);
     expect(tasks.every((t) => t.status === "done")).toBe(true);
-    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
 
     // 保安角色降级:默认叙述 + anomaly 节点;其他角色叙述正常
     const nodes = listTimelineByDrill(db, drillId);
@@ -797,13 +799,13 @@ describe("推演运行器 · 处置段(缝 1)", () => {
 
     // 三任务到期时刻(255/274/297s)落在同一 tick(offset 300):Send 扇出应并发调用三角色
     let maxTickMs = 0;
-    for (let i = 0; i < 200 && runner.status !== "paused"; i++) {
+    for (let i = 0; i < 200 && runner.status === "running"; i++) {
       realNow.t += 1_000;
       const startedAt = Date.now();
       await runner.tick();
       maxTickMs = Math.max(maxTickMs, Date.now() - startedAt);
     }
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     // 串行执行三角色需 ≥360ms;并发应显著低于该下限
     expect(maxTickMs).toBeLessThan(300);
     const roles = listTimelineByDrill(db, drillId)
@@ -848,7 +850,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
     expect(runner.status).toBe("awaiting_confirmation"); // 通知确认点(剧本缺失 → 降级默认文案)
     await runner.confirmNotification();
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
 
     // 未新增任务;拒绝动作留痕
     expect(listTasksByDrill(db, drillId)).toHaveLength(3);
@@ -856,7 +858,7 @@ describe("推演运行器 · 处置段(缝 1)", () => {
       .filter((n) => n.node_type === "operator_action")
       .find((n) => n.title.includes("拒绝"))!;
     expect(JSON.parse(rejectNode.detail).action).toBe("reject");
-    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
     db.close();
   });
 });
@@ -881,7 +883,7 @@ describe("推演运行器 · 通知段(缝 1)", () => {
     await driveUntilNotRunning(runner, realNow);
 
     // 全程无确认暂停;两份通知最终 published_sim
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const rows = listNotificationsByDrill(db, drillId);
     expect(rows).toHaveLength(2);
     expect(rows.every((n) => n.status === "published_sim")).toBe(true);
@@ -931,8 +933,8 @@ describe("推演运行器 · 通知段(缝 1)", () => {
 
     // 失败不影响主线:推演照常推进到段末暂停,事件保持 controlled
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
-    expect(getEventByDrillId(db, drillId)!.status).toBe("controlled");
+    expect(runner.status).toBe("completed");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
     const failedRow = listNotificationsByDrill(db, drillId).find((n) => n.status === "failed")!;
     expect(failedRow.audience).toBe("parents");
 
@@ -995,7 +997,7 @@ describe("推演运行器 · 通知段(缝 1)", () => {
     const result = await runner.confirmNotification();
     expect(result).toEqual({ published: 2, failed: 0 });
     await driveUntilNotRunning(runner, realNow);
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     db.close();
   });
 
@@ -1014,7 +1016,7 @@ describe("推演运行器 · 通知段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
     await driveUntilNotRunning(runner, realNow);
 
-    expect(runner.status).toBe("paused");
+    expect(runner.status).toBe("completed");
     const rows = listNotificationsByDrill(db, drillId);
     expect(rows.every((n) => n.status === "published_sim")).toBe(true);
     expect(rows.every((n) => n.content.includes("模拟演练"))).toBe(true);
@@ -1034,3 +1036,212 @@ function getTimelineDetail(db: ReturnType<typeof openDatabase>, nodeId: string):
   };
   return JSON.parse(node.detail);
 }
+
+// —— 复盘段剧本助手 ——
+
+function reportJson(): string {
+  return JSON.stringify({
+    timelineSummary: [
+      { nodeSeq: 1, summary: "首个烟雾信号经感知解读创建事件" },
+      { nodeSeq: 2, summary: "摄像头视觉确认作为补充证据" },
+      { nodeSeq: 4, summary: "指挥调度定级为较大等级" },
+      { nodeSeq: 5, summary: "三角色任务方案派发执行" },
+      { nodeSeq: 999, summary: "引用不存在的节点(应被过滤)" },
+    ],
+    problems: [
+      { nodeSeq: 4, title: "定级耗时偏长", detail: "从上报到定级耗时超出基准(剧本问题)" },
+      { nodeSeq: 999, title: "引用无效节点的问题", detail: "nodeSeq 无效应丢弃引用保留问题" },
+    ],
+    improvements: [{ title: "压缩定级链路", detail: "建议预置等级判定参考表加快研判(剧本建议)" }],
+  });
+}
+
+function fullAutoModel(overrides: Record<string, ScriptedModel["scripts"][string]> = {}): ScriptedModel {
+  return new ScriptedModel({
+    perception: [perceptionJson(), perceptionJson(), perceptionJson()],
+    command: [commandJson("II"), planJson(), evalNoJson(), evalNoJson(), evalNoJson()],
+    handling_security: [narrativeJson("保安组封锁引导疏散。")],
+    handling_medical: [narrativeJson("医务组待命评估。")],
+    handling_logistics: [narrativeJson("首次断电失败。"), narrativeJson("重试完成断电。")],
+    notification: [notificationJson("staff"), notificationJson("parents")],
+    review: [reportJson()],
+    ...overrides,
+  });
+}
+
+describe("推演运行器 · 复盘段收尾(缝 1)", () => {
+  it("auto 全链路收尾:事件 closed、报告落库可溯源、规则评分写入 drills.score、演练 completed", async () => {
+    const db = openDatabase(":memory:");
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+    await driveUntilNotRunning(runner, realNow);
+
+    // 演练终态 completed:score 与 ended_at 落库,模拟时钟停走
+    expect(runner.status).toBe("completed");
+    const drill = getDrill(db, drillId)!;
+    expect(drill.status).toBe("completed");
+    expect(drill.score).not.toBeNull();
+    expect(drill.score).toBeGreaterThanOrEqual(0);
+    expect(drill.score).toBeLessThanOrEqual(100);
+    expect(drill.ended_at).not.toBeNull();
+    expect((JSON.parse(drill.clock_state) as ClockState).running).toBe(false);
+
+    // 事件状态机走完全程:closed 且记录关闭(模拟)时刻
+    const event = getEventByDrillId(db, drillId)!;
+    expect(event.status).toBe("closed");
+    expect(event.resolved_sim_time).not.toBeNull();
+
+    // 时间线节点齐备:八类主轴节点覆盖,事件关闭节点属复盘段
+    const nodes = listTimelineByDrill(db, drillId);
+    for (const type of ["signal", "grading", "dispatch", "feedback", "notification", "status_change"]) {
+      expect(nodes.some((n) => n.node_type === type)).toBe(true);
+    }
+    const closeNode = nodes.find((n) => n.node_type === "status_change" && n.title.includes("事件关闭"))!;
+    expect(closeNode.phase).toBe("review");
+
+    // 复盘报告落库:归纳逐条可溯源到真实节点,无效引用被过滤;指标条与任务结果一致
+    const report = getReportByDrillId(db, drillId)!;
+    expect(report.source).toBe("model");
+    const summary = JSON.parse(report.timeline_summary) as Array<{ nodeSeq: number; summary: string }>;
+    expect(summary).toHaveLength(4); // 5 条剧本中 nodeSeq=999 的无效引用被过滤
+    const seqSet = new Set(nodes.map((n) => n.seq));
+    expect(summary.every((s) => seqSet.has(s.nodeSeq))).toBe(true);
+    const problems = JSON.parse(report.problems) as Array<{ nodeSeq?: number; title: string }>;
+    expect(problems).toHaveLength(2);
+    expect(problems.every((p) => p.nodeSeq === undefined || seqSet.has(p.nodeSeq))).toBe(true);
+    const metrics = JSON.parse(report.metrics) as DrillMetrics;
+    expect(metrics.taskDone).toBe(3); // PLAN_3 三任务全部完成(logistics 首试失败自动重试成功)
+    expect(metrics.taskTotal).toBe(3);
+    expect(metrics.resourceTotal).toBeGreaterThan(0);
+    expect(metrics.totalDurationMs).toBeGreaterThanOrEqual(metrics.gradingDurationMs);
+    // 评分与指标同源:drills.score 等于规则函数作用于报告指标条的结果
+    expect(drill.score).toBe(computeScore(metrics));
+
+    // 图快照:复盘段完成,报告 id 可重建
+    const state = JSON.parse(getGraphRunByDrillId(db, drillId)!.state);
+    expect(state.phase).toBe("review");
+    expect(state.review.reportId).toBe(report.id);
+    db.close();
+  });
+
+  it("复盘智能体坏输出:规则默认报告骨架 + anomaly 节点(复盘段),演练仍达 completed", async () => {
+    const db = openDatabase(":memory:");
+    const model = fullAutoModel({ review: [{ badJson: true }, { badJson: true }] });
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+    await driveUntilNotRunning(runner, realNow);
+
+    expect(runner.status).toBe("completed");
+    const report = getReportByDrillId(db, drillId)!;
+    expect(report.source).toBe("degraded");
+    const summary = JSON.parse(report.timeline_summary) as Array<{ nodeSeq: number }>;
+    expect(summary.length).toBeGreaterThan(0);
+    const seqSet = new Set(listTimelineByDrill(db, drillId).map((n) => n.seq));
+    expect(summary.every((s) => seqSet.has(s.nodeSeq))).toBe(true);
+    // 复盘降级记录 anomaly 节点
+    const anomaly = listTimelineByDrill(db, drillId).find(
+      (n) => n.node_type === "anomaly" && n.phase === "review",
+    );
+    expect(anomaly?.title).toContain("复盘智能体降级");
+    expect(getDrill(db, drillId)!.score).not.toBeNull();
+    db.close();
+  });
+
+  it("全链路降级回归:调度/处置/通知/复盘同时坏输出,其余环节照常推进,演练仍达终态", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel({
+      perception: [perceptionJson(), perceptionJson(), perceptionJson()],
+      command: [{ badJson: true }, { badJson: true }], // 定级与方案全部降级(后续调用剧本缺失同走降级)
+      handling_security: [{ badJson: true }, { badJson: true }], // 保安角色降级
+      handling_medical: [narrativeJson("医务组待命评估。")],
+      handling_logistics: [narrativeJson("后勤组完成断电。")],
+      notification: [{ badJson: true }, { badJson: true }, { badJson: true }, { badJson: true }],
+      review: [{ badJson: true }, { badJson: true }],
+    });
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+    await driveUntilNotRunning(runner, realNow);
+
+    // 主线不受任何单段降级影响:任务全终态、事件关闭、演练完成、评分与报告存在
+    expect(runner.status).toBe("completed");
+    const tasks = listTasksByDrill(db, drillId);
+    expect(tasks.length).toBe(3); // 调度降级 → 规则默认三角色方案
+    expect(tasks.every((t) => t.status === "done" || t.status === "failed")).toBe(true);
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
+    expect(getDrill(db, drillId)!.score).not.toBeNull();
+    expect(getReportByDrillId(db, drillId)!.source).toBe("degraded");
+
+    // 各段降级均有 anomaly 留痕:研判/处置/通知/复盘
+    const phases = new Set(
+      listTimelineByDrill(db, drillId)
+        .filter((n) => n.node_type === "anomaly")
+        .map((n) => n.phase),
+    );
+    for (const phase of ["grading", "handling", "notification", "review"]) {
+      expect(phases.has(phase)).toBe(true);
+    }
+    db.close();
+  });
+
+  it("固定种子两次运行:评分、指标条、报告归纳与时间线节点序列完全一致(可复现)", async () => {
+    const db = openDatabase(":memory:");
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+
+    const runOnce = async (): Promise<{ drillId: string }> => {
+      const runner = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+      const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+      await driveUntilNotRunning(runner, realNow);
+      return { drillId };
+    };
+
+    const first = await runOnce();
+    const second = await runOnce();
+
+    expect(getDrill(db, first.drillId)!.score).toBe(getDrill(db, second.drillId)!.score);
+    const r1 = getReportByDrillId(db, first.drillId)!;
+    const r2 = getReportByDrillId(db, second.drillId)!;
+    expect(r1.metrics).toBe(r2.metrics);
+    expect(r1.timeline_summary).toBe(r2.timeline_summary);
+    expect(r1.problems).toBe(r2.problems);
+    const types1 = listTimelineByDrill(db, first.drillId).map((n) => n.node_type);
+    const types2 = listTimelineByDrill(db, second.drillId).map((n) => n.node_type);
+    expect(types1).toEqual(types2);
+    db.close();
+  });
+
+  it("中断恢复:报告已落库但收尾未完成(快照丢失/保留两种窗口),重跑不重复建报告且完成收尾", async () => {
+    const db = openDatabase(":memory:");
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("completed");
+
+    // 窗口 A:复盘图已完成(报告已落库)但 graph_runs 快照未写入 → 图幂等,直接复用既有报告
+    const run = getGraphRunByDrillId(db, drillId)!;
+    const state = JSON.parse(run.state) as Record<string, unknown>;
+    delete state.review;
+    db.prepare("UPDATE graph_runs SET state = ? WHERE id = ?").run(JSON.stringify(state), run.id);
+    db.prepare("UPDATE drills SET status = 'running', score = NULL, ended_at = NULL WHERE id = ?").run(drillId);
+
+    await runner.tick();
+    expect(runner.status).toBe("completed");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM reports WHERE drill_id = ?").get(drillId)).toEqual({ n: 1 });
+    expect(getDrill(db, drillId)!.score).not.toBeNull();
+
+    // 窗口 B:快照已写入但 drills 收尾(评分/终态)未落 → 从快照直接补齐收尾,不再进图
+    const run2 = getGraphRunByDrillId(db, drillId)!;
+    const state2 = JSON.parse(run2.state) as Record<string, unknown>;
+    expect(state2.review).toBeDefined();
+    db.prepare("UPDATE drills SET status = 'running', score = NULL, ended_at = NULL WHERE id = ?").run(drillId);
+    await runner.tick();
+    expect(runner.status).toBe("completed");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM reports WHERE drill_id = ?").get(drillId)).toEqual({ n: 1 });
+    expect(getDrill(db, drillId)!.score).not.toBeNull();
+    db.close();
+  });
+});
+

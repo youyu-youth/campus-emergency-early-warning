@@ -6,6 +6,7 @@ import type { HandlingInput } from "./handling";
 import { AUDIENCE_LABELS } from "../simulation/delivery-rules";
 import type { NotificationInput } from "./notification";
 import type { PerceptionInput } from "./perception";
+import type { ReviewInput } from "./review";
 
 export function perceptionPrompt(input: PerceptionInput): string {
   const role = input.isFirstSignal ? "首个信号:请解读并上报为新事件" : "后续信号:请解读并作为当前事件的补充证据";
@@ -183,4 +184,43 @@ export function notificationPrompt(input: NotificationInput): string {
   "title": "通知标题(中文一句话,含【模拟演练】)",
   "content": "通知正文(中文,3–5 句,含「模拟演练」标识)"
 }`;
+}
+
+export function reviewPrompt(input: ReviewInput): string {
+  const seconds = (ms: number) => `${Math.round(ms / 1000)} 秒`;
+  return `你是校园应急演练平台的「复盘评估智能体」。当前处于模拟演练环境,下述全部为演练数据,不是真实警情。
+
+## 任务
+演练已结束,请仅基于下述留存的时间线与动作日志生成复盘报告:时间线归纳、问题分析、改进建议。不得虚构日志中不存在的事实;指标由规则计算,你只引用不重算。
+
+## 演练(模拟演练数据)
+- 场景:${input.scenarioName}(${input.scenarioKey})
+- 事件:${input.event.title} · 等级 ${input.event.severity} · 位置:${input.event.location}
+- 发现时间(模拟):${input.event.detectedSimTime}
+
+## 指标条(规则计算,只读事实)
+- 总时长:${seconds(input.metrics.totalDurationMs)}
+- 发现→上报耗时:${seconds(input.metrics.reportDurationMs)}
+- 定级耗时:${seconds(input.metrics.gradingDurationMs)}
+- 任务完成率:${input.metrics.taskDone}/${input.metrics.taskTotal}
+- 资源消耗:${input.metrics.resourceTotal} 单位
+- 智能体降级次数:${input.anomalyCount}
+
+## 时间线留存节点(归纳需引用 nodeSeq 溯源)
+${input.timeline.map((n) => `- #${n.seq} [${n.simTimeLabel}] ${n.title}(${n.phase}/${n.nodeType})`).join("\n")}
+
+## 任务执行结果
+${input.tasks.map((t, i) => `${i + 1}. [${t.role}] ${t.title}:${t.status}${t.success === false ? `(第 ${t.attempts} 次尝试后失败)` : ""}`).join("\n") || "(无)"}
+
+## 通知发布结果
+${input.notifications.map((n, i) => `${i + 1}. [${AUDIENCE_LABELS[n.audience]}] ${n.title}:${n.status}${n.delivered !== null && n.total !== null ? `(送达 ${n.delivered}/${n.total})` : ""}`).join("\n") || "(无)"}
+
+## 输出要求
+仅输出一个 JSON 对象,不要输出任何其他文字或代码块标记。字段如下:
+{
+  "timelineSummary": [{ "nodeSeq": 对应上面留存节点的序号, "summary": "该节点环节的归纳(中文,一句话)" }],
+  "problems": [{ "nodeSeq": 可溯源的节点序号(可选), "title": "问题标题(中文)", "detail": "问题分析(中文,基于日志事实)" }],
+  "improvements": [{ "title": "改进建议标题(中文)", "detail": "具体改进措施(中文)" }]
+}
+timelineSummary 覆盖处置全过程的关键节点(至少 3 条);没有问题时 problems 为空数组,不要编造问题。`;
 }

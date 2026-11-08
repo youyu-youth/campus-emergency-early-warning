@@ -29,6 +29,18 @@ function notificationJson(title: string, content: string): string {
   return JSON.stringify({ title, content });
 }
 
+function reviewJson(
+  timelineSummary: Array<{ nodeSeq: number; summary: string }>,
+  problem: { nodeSeq: number; title: string; detail: string },
+  improvement: { title: string; detail: string },
+): string {
+  return JSON.stringify({
+    timelineSummary,
+    problems: [problem],
+    improvements: [improvement],
+  });
+}
+
 export const DEMO_SCRIPTS: Record<
   ScenarioKey,
   {
@@ -38,6 +50,7 @@ export const DEMO_SCRIPTS: Record<
     handling_medical: ScriptedResponse[];
     handling_logistics: ScriptedResponse[];
     notification: ScriptedResponse[];
+    review: ScriptedResponse[];
   }
 > = {
   fire_alarm: {
@@ -99,6 +112,23 @@ export const DEMO_SCRIPTS: Record<
         "【模拟演练】家长您好:今日演练中图书馆三层东区模拟发生火情,学校已按预案组织疏散与处置,学生安全在控,请勿恐慌赶往学校,后续将通过学校渠道通报演练情况。本通报为模拟演练数据,非真实警情。",
       ),
     ],
+    review: [
+      reviewJson(
+        [
+          { nodeSeq: 1, summary: "烟雾传感器率先发现异常,感知智能体解读后创建事件(演示剧本响应)" },
+          { nodeSeq: 2, summary: "摄像头视觉确认与传感器相互印证,补充证据关联同一事件(演示剧本响应)" },
+        ],
+        {
+          nodeSeq: 3,
+          title: "后勤断电首次失败",
+          detail: "配电箱跳闸后首次断电未成功,重试改用备用回路才完成,暴露备用回路切换不够熟练(演示剧本响应)",
+        },
+        {
+          title: "强化备用回路切换训练",
+          detail: "为后勤断电流程增加备用回路切换的专项演练,缩短重试耗时(演示剧本响应)",
+        },
+      ),
+    ],
   },
   medical_emergency: {
     perception: [
@@ -144,6 +174,23 @@ export const DEMO_SCRIPTS: Record<
       notificationJson(
         "【模拟演练】操场西侧学生突发疾病情况通报(家长)",
         "【模拟演练】家长您好:今日演练中操场西侧有一名学生模拟突发疾病,学校医务组已第一时间到场处置,学生情况平稳,请勿担忧。本通报为模拟演练数据,非真实警情。",
+      ),
+    ],
+    review: [
+      reviewJson(
+        [
+          { nodeSeq: 1, summary: "学生手环心率异常率先触发上报,感知智能体解读为突发疾病事件(演示剧本响应)" },
+          { nodeSeq: 2, summary: "倒地检测与心率异常相互印证,补充证据关联同一事件(演示剧本响应)" },
+        ],
+        {
+          nodeSeq: 2,
+          title: "证据链闭合偏慢",
+          detail: "从心率异常上报到倒地视觉确认间隔较长,期间未启动预处置,定级等待了全部证据(演示剧本响应)",
+        },
+        {
+          title: "引入分级触发预处置",
+          detail: "单一强证据(心率严重异常)可先触发医务预出动,证据闭合后再定级,压缩响应空窗(演示剧本响应)",
+        },
       ),
     ],
   },
