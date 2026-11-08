@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // AI 工具目录（技能脚本，非项目代码）
+    ".agents/**",
+    ".zcode/**",
+    ".claude/**",
+    ".codex/**",
   ]),
 ]);
 

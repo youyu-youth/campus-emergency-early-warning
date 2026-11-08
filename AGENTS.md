@@ -26,6 +26,12 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 
 
+## 编码规范和使用习惯
+
+- 技术文档查询时，使用 context7 mcp 来查询 文档
+
+
+
 ## 1. 项目定位与核心闭环
 
 - 本项目面向校园突发事件的**模拟预警与多智能体协同应急推演**，用于教学、演练与决策辅助。
