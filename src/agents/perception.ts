@@ -3,7 +3,7 @@
 
 import type { ScheduledSignal } from "../simulation/engine";
 import { z } from "zod";
-import type { AgentChatModel } from "./model";
+import { invokeAgent, type AgentCallResult, type AgentChatModel } from "./model";
 import { perceptionPrompt } from "./prompts";
 
 export const PerceptionInputSchema = z.object({
@@ -27,51 +27,24 @@ export const PerceptionOutputSchema = z.object({
 });
 export type PerceptionOutput = z.infer<typeof PerceptionOutputSchema>;
 
-export interface PerceptionResult {
-  output: PerceptionOutput;
-  source: "model" | "degraded";
-  /** 降级说明(时间线 anomaly 节点记录) */
-  degraded?: {
-    reason: "invalid_output" | "timeout";
-    attempts: number;
-    lastError: string;
-  };
-}
+export type PerceptionResult = AgentCallResult<PerceptionOutput>;
 
 /** 单次模型调用超时(毫秒) */
 export const PERCEPTION_TIMEOUT_MS = 20_000;
-/** 总尝试次数:首次 + 重试一次 */
-const MAX_ATTEMPTS = 2;
 
 export async function runPerception(
   model: AgentChatModel,
   input: PerceptionInput,
   opts?: { timeoutMs?: number },
 ): Promise<PerceptionResult> {
-  const timeoutMs = opts?.timeoutMs ?? PERCEPTION_TIMEOUT_MS;
-  const prompt = perceptionPrompt(PerceptionInputSchema.parse(input));
-  let lastError = "";
-  let timedOut = false;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const { content } = await withTimeout(
-        model.invoke({ agent: "perception", prompt }),
-        timeoutMs,
-      );
-      const output = PerceptionOutputSchema.parse(extractJson(content));
-      return { output, source: "model" };
-    } catch (error) {
-      if (error instanceof ModelTimeoutError) timedOut = true;
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  return {
-    output: defaultPerception(input),
-    source: "degraded",
-    degraded: { reason: timedOut ? "timeout" : "invalid_output", attempts: MAX_ATTEMPTS, lastError },
-  };
+  return invokeAgent({
+    model,
+    agent: "perception",
+    prompt: perceptionPrompt(PerceptionInputSchema.parse(input)),
+    schema: PerceptionOutputSchema,
+    fallbackOutput: () => defaultPerception(input),
+    timeoutMs: opts?.timeoutMs ?? PERCEPTION_TIMEOUT_MS,
+  });
 }
 
 /** 规则默认解读:模型不可用时直接采用信号的来源位置与类型,保证事件仍可上报 */
@@ -89,32 +62,4 @@ export function defaultPerception(input: PerceptionInput): PerceptionOutput {
     ],
     reasoning: "模型输出无效或超时,按规则默认解读:直接采用信号的来源位置与类型上报。",
   };
-}
-
-/** 单次模型调用超时的判型错误 */
-class ModelTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`模型调用超时(${timeoutMs}ms)`);
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new ModelTimeoutError(timeoutMs)), timeoutMs),
-    ),
-  ]);
-}
-
-/** 提取模型输出中的 JSON 对象(容忍 ```json 代码块包裹) */
-export function extractJson(content: string): unknown {
-  const text = content.trim();
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new Error("模型输出不是有效 JSON");
-  }
 }

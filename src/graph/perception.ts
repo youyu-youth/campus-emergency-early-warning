@@ -12,13 +12,6 @@ import { formatSimClock, simTimeIso } from "../simulation/clock";
 import { getScenario } from "../simulation/engine";
 import type { ScenarioKey } from "../simulation/scenarios";
 
-/** graph_runs.state 的快照形状(感知阶段) */
-export interface PerceptionPhaseState {
-  phase: "perception";
-  eventId: string | null;
-  processedSignalIds: string[];
-}
-
 /** 已写入 signals 表、等待感知处理的到期信号 */
 export interface PendingSignal {
   signalId: string;

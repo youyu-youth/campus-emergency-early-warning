@@ -8,7 +8,7 @@ function perceptionJson(output: Record<string, unknown>): string {
   return JSON.stringify(output);
 }
 
-export const DEMO_SCRIPTS: Record<ScenarioKey, { perception: ScriptedResponse[] }> = {
+export const DEMO_SCRIPTS: Record<ScenarioKey, { perception: ScriptedResponse[]; command: ScriptedResponse[] }> = {
   fire_alarm: {
     perception: [
       perceptionJson({
@@ -36,6 +36,13 @@ export const DEMO_SCRIPTS: Record<ScenarioKey, { perception: ScriptedResponse[] 
         reasoning: "温度上升趋势进一步佐证火情发展,作为补充证据关联当前事件(演示剧本响应)",
       }),
     ],
+    command: [
+      JSON.stringify({
+        suggestedSeverity: "II",
+        reasoning:
+          "烟雾浓度显著超标且摄像头视觉确认,图书馆人流密集、火势存在蔓延趋势,建议定为较大(Ⅱ)级(演示剧本响应)",
+      }),
+    ],
   },
   medical_emergency: {
     perception: [
@@ -54,6 +61,13 @@ export const DEMO_SCRIPTS: Record<ScenarioKey, { perception: ScriptedResponse[] 
         occurredTime: "10:15:30",
         evidence: ["西侧跑道弯道处摄像头检测到倒地行为"],
         reasoning: "倒地检测与心率异常相互印证,作为补充证据关联当前事件(演示剧本响应)",
+      }),
+    ],
+    command: [
+      JSON.stringify({
+        suggestedSeverity: "III",
+        reasoning:
+          "学生倒地伴心率严重异常,涉及单一人员生命安全但范围可控、无扩散风险,建议定为一般(Ⅲ)级(演示剧本响应)",
       }),
     ],
   },

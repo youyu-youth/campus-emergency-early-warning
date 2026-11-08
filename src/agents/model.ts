@@ -1,5 +1,8 @@
 // 模型适配器:智能体只依赖可注入的对话模型接口
 // 测试注入可编排剧本的假模型;生产注入 DeepSeek(wrapLangChain 适配)
+// invokeAgent 是全智能体统一的调用环:超时约束 + 重试一次 + 仍失败按规则默认结果降级
+
+import { z } from "zod";
 
 export interface AgentInvocation {
   /** 发起调用的智能体名(如 perception),假模型按「智能体 + 调用序」取剧本 */
@@ -45,4 +48,82 @@ export function wrapLangChain(
       return { content };
     },
   };
+}
+
+// —— 统一调用环 ——
+
+export interface DegradedInfo {
+  reason: "invalid_output" | "timeout";
+  attempts: number;
+  lastError: string;
+}
+
+export interface AgentCallResult<Output> {
+  output: Output;
+  source: "model" | "degraded";
+  /** 降级说明(时间线 anomaly 节点记录) */
+  degraded?: DegradedInfo;
+}
+
+/** 总尝试次数:首次 + 重试一次 */
+const MAX_ATTEMPTS = 2;
+
+export async function invokeAgent<Output>(args: {
+  model: AgentChatModel;
+  agent: string;
+  prompt: string;
+  schema: z.ZodType<Output>;
+  /** 规则默认结果:模型不可用时保证流程继续推进 */
+  fallbackOutput: () => Output;
+  timeoutMs: number;
+}): Promise<AgentCallResult<Output>> {
+  let lastError = "";
+  let timedOut = false;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const { content } = await withTimeout(
+        args.model.invoke({ agent: args.agent, prompt: args.prompt }),
+        args.timeoutMs,
+      );
+      return { output: args.schema.parse(extractJson(content)), source: "model" };
+    } catch (error) {
+      if (error instanceof ModelTimeoutError) timedOut = true;
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return {
+    output: args.fallbackOutput(),
+    source: "degraded",
+    degraded: { reason: timedOut ? "timeout" : "invalid_output", attempts: MAX_ATTEMPTS, lastError },
+  };
+}
+
+/** 单次模型调用超时的判型错误 */
+class ModelTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`模型调用超时(${timeoutMs}ms)`);
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new ModelTimeoutError(timeoutMs)), timeoutMs),
+    ),
+  ]);
+}
+
+/** 提取模型输出中的 JSON 对象(容忍 ```json 代码块包裹) */
+export function extractJson(content: string): unknown {
+  const text = content.trim();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error("模型输出不是有效 JSON");
+  }
 }

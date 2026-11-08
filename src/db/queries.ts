@@ -2,7 +2,7 @@
 // 表结构见 migrations.ts,行类型见 types.ts
 
 import { randomUUID } from "node:crypto";
-import type { DrillStatus, SignalStatus } from "../simulation/state-machines";
+import type { DrillStatus, EventSeverity, SignalStatus } from "../simulation/state-machines";
 import type { Db } from "./client";
 import type { DrillRow, EventRow, GraphRunRow, SignalRow, TimelineNodeRow } from "./types";
 
@@ -34,6 +34,14 @@ export function getDrill(db: Db, id: string): DrillRow | undefined {
 export function updateDrillStatus(db: Db, id: string, status: DrillStatus): void {
   db.prepare("UPDATE drills SET status = ?, updated_at = ? WHERE id = ?").run(
     status,
+    new Date().toISOString(),
+    id,
+  );
+}
+
+export function updateDrillClock(db: Db, id: string, clockState: string): void {
+  db.prepare("UPDATE drills SET clock_state = ?, updated_at = ? WHERE id = ?").run(
+    clockState,
     new Date().toISOString(),
     id,
   );
@@ -116,6 +124,15 @@ export function getEventByDrillId(db: Db, drillId: string): EventRow | undefined
     .get(drillId) as EventRow | undefined;
 }
 
+/** 事件定级:写入等级并把状态推进为 graded(状态机校验由调用方负责) */
+export function updateEventGrading(db: Db, id: string, severity: EventSeverity): void {
+  db.prepare("UPDATE events SET severity = ?, status = 'graded', updated_at = ? WHERE id = ?").run(
+    severity,
+    new Date().toISOString(),
+    id,
+  );
+}
+
 // —— 时间线 ——
 
 export interface NewTimelineNode {
@@ -166,6 +183,17 @@ export function listTimelineByDrill(db: Db, drillId: string): TimelineNodeRow[] 
   return db
     .prepare("SELECT * FROM timeline_nodes WHERE drill_id = ? ORDER BY seq")
     .all(drillId) as TimelineNodeRow[];
+}
+
+export function getTimelineNode(db: Db, id: string): TimelineNodeRow | undefined {
+  return db.prepare("SELECT * FROM timeline_nodes WHERE id = ?").get(id) as
+    | TimelineNodeRow
+    | undefined;
+}
+
+/** 更新时间线节点 detail(⚑ 节点确认后追加确认信息) */
+export function updateTimelineNodeDetail(db: Db, id: string, detail: string): void {
+  db.prepare("UPDATE timeline_nodes SET detail = ? WHERE id = ?").run(detail, id);
 }
 
 // —— 图执行 ——

@@ -19,6 +19,14 @@ export type EventStatus =
 
 export type EventSeverity = "I" | "II" | "III" | "IV";
 
+/** 事件等级显示词汇(与 GLOSSARY 同源:Ⅰ 重大 / Ⅱ 较大 / Ⅲ 一般 / Ⅳ 轻微) */
+export const SEVERITY_LABELS: Record<EventSeverity, string> = {
+  I: "Ⅰ 重大",
+  II: "Ⅱ 较大",
+  III: "Ⅲ 一般",
+  IV: "Ⅳ 轻微",
+};
+
 export type TaskStatus =
   | "pending_confirmation" // 待确认
   | "executing" // 执行中
