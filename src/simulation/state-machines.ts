@@ -34,6 +34,9 @@ export type NotificationStatus =
 
 export type AgentRole = "security" | "medical" | "logistics";
 
+/** 信号状态(无流转规则,由感知流程推进) */
+export type SignalStatus = "new" | "processing" | "reported" | "ignored";
+
 type TransitionMap<S extends string> = Readonly<Record<S, readonly S[]>>;
 
 export const DRILL_TRANSITIONS: TransitionMap<DrillStatus> = {

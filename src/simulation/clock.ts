@@ -50,6 +50,11 @@ export function simTimeMs(state: ClockState, realNow: number): number {
   return state.simOrigin + elapsedMs(state, realNow);
 }
 
+/** 模拟世界内的某时刻(起点 + 偏移)落库用的 ISO 字符串 */
+export function simTimeIso(simOriginMs: number, offsetMs: number): string {
+  return new Date(simOriginMs + offsetMs).toISOString();
+}
+
 /** 一天内的 HH:mm:ss 显示（模拟仪表时钟） */
 export function formatSimClock(offsetMs: number): string {
   const totalSeconds = Math.floor(offsetMs / 1000);
