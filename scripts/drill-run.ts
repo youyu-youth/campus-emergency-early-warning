@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
-import { ChatDeepSeek } from "@langchain/deepseek";
-import { ScriptedModel, wrapLangChain } from "../src/agents/model";
+import { ScriptedModel } from "../src/agents/model";
+import { createProviderModel, resolveProviderConfig, type ProviderEnv } from "../src/agents/model-provider";
 import { getDb } from "../src/db/client";
 import {
   getGraphRunByDrillId,
@@ -128,11 +128,15 @@ async function main(): Promise<void> {
   const model =
     args.model === "fake"
       ? new ScriptedModel(DEMO_SCRIPTS[scenarioKey])
-      : wrapLangChain(createDeepSeek());
+      : createProviderModel();
 
   console.log("⚠ 校园突发事件预警平台 · 模拟演练推演(所有事件与通知均为演练数据,非真实警情)");
+  const modelLabel =
+    args.model === "fake"
+      ? "假模型(演示剧本)"
+      : resolveProviderConfig(process.env as ProviderEnv).label;
   console.log(
-    `▶ 发起演练:${scenario.name} · 种子 ${args.seed} · 倍速 ${args.speed}x · 模型 ${args.model === "fake" ? "假模型(演示剧本)" : "DeepSeek"} · ${args.auto ? "全自动模式(跳过确认)" : "人工确认模式"}`,
+    `▶ 发起演练:${scenario.name} · 种子 ${args.seed} · 倍速 ${args.speed}x · 模型 ${modelLabel} · ${args.auto ? "全自动模式(跳过确认)" : "人工确认模式"}`,
   );
   console.log("ℹ 推演进行中可用命令:p 暂停/继续 · 数字 设定倍速(如 120)· x 终止(需二次确认)");
 
@@ -541,15 +545,6 @@ async function promptDispatchConfirmation(
   }
   const unchanged = JSON.stringify(tasks) === JSON.stringify(dispatch.proposedTasks);
   return unchanged ? {} : { tasks };
-}
-
-function createDeepSeek(): ChatDeepSeek {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) {
-    console.error("缺少 DEEPSEEK_API_KEY:请在 .env.local 中配置,或使用 --model fake 离线演示");
-    process.exit(1);
-  }
-  return new ChatDeepSeek({ model: "deepseek-chat", apiKey, temperature: 0, timeout: 30_000 });
 }
 
 function printSummary(db: ReturnType<typeof getDb>, drillId: string): void {
