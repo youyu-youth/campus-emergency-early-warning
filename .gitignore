@@ -55,3 +55,6 @@ next-env.d.ts
 skills-lock.json
 .codegraph
 .mcp.json
+
+# impeccable 本机配置(设计工件目录其余入库)
+.impeccable/config.local.json

@@ -27,6 +27,18 @@ export const SEVERITY_LABELS: Record<EventSeverity, string> = {
   IV: "Ⅳ 轻微",
 };
 
+/** 推演五阶段(与 runner DrillRunState.phase 对应) */
+export type DrillPhase = "perception" | "grading" | "handling" | "notification" | "review";
+
+/** 阶段显示词汇(与 GLOSSARY 同源:感知 / 研判 / 处置 / 通知 / 复盘) */
+export const PHASE_LABELS: Record<DrillPhase, string> = {
+  perception: "感知",
+  grading: "研判",
+  handling: "处置",
+  notification: "通知",
+  review: "复盘",
+};
+
 export type TaskStatus =
   | "pending_confirmation" // 待确认
   | "executing" // 执行中

@@ -1,0 +1,532 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-09T00:00:00Z",
+  "title": "Design System: 校园突发事件预警平台",
+  "extensions": {
+    "colorMeta": {
+      "shell": {
+        "role": "neutral",
+        "displayName": "发布台藏青",
+        "canonical": "oklch(0.23 0.055 264)",
+        "tonalRamp": [
+          "oklch(0.15 0.028 264)",
+          "oklch(0.26 0.044 264)",
+          "oklch(0.37 0.055 264)",
+          "oklch(0.48 0.055 264)",
+          "oklch(0.59 0.05 264)",
+          "oklch(0.7 0.044 264)",
+          "oklch(0.81 0.03 264)",
+          "oklch(0.92 0.015 264)"
+        ]
+      },
+      "shell-foreground": {
+        "role": "neutral",
+        "displayName": "壳上银白",
+        "canonical": "oklch(0.935 0.015 262)",
+        "tonalRamp": [
+          "oklch(0.15 0.01 262)",
+          "oklch(0.26 0.012 262)",
+          "oklch(0.37 0.014 262)",
+          "oklch(0.48 0.015 262)",
+          "oklch(0.59 0.015 262)",
+          "oklch(0.7 0.014 262)",
+          "oklch(0.81 0.012 262)",
+          "oklch(0.92 0.01 262)"
+        ]
+      },
+      "shell-muted": {
+        "role": "neutral",
+        "displayName": "壳上雾蓝",
+        "canonical": "oklch(0.73 0.05 265)",
+        "tonalRamp": [
+          "oklch(0.15 0.025 265)",
+          "oklch(0.26 0.04 265)",
+          "oklch(0.37 0.05 265)",
+          "oklch(0.48 0.05 265)",
+          "oklch(0.59 0.045 265)",
+          "oklch(0.7 0.04 265)",
+          "oklch(0.81 0.028 265)",
+          "oklch(0.92 0.014 265)"
+        ]
+      },
+      "shell-border": {
+        "role": "neutral",
+        "displayName": "藏青界线",
+        "canonical": "oklch(0.32 0.06 264)",
+        "tonalRamp": [
+          "oklch(0.15 0.03 264)",
+          "oklch(0.26 0.048 264)",
+          "oklch(0.37 0.06 264)",
+          "oklch(0.48 0.06 264)",
+          "oklch(0.59 0.054 264)",
+          "oklch(0.7 0.048 264)",
+          "oklch(0.81 0.032 264)",
+          "oklch(0.92 0.016 264)"
+        ]
+      },
+      "indigo": {
+        "role": "primary",
+        "displayName": "靛青",
+        "canonical": "oklch(0.545 0.185 264)",
+        "tonalRamp": [
+          "oklch(0.15 0.09 264)",
+          "oklch(0.26 0.15 264)",
+          "oklch(0.37 0.18 264)",
+          "oklch(0.48 0.185 264)",
+          "oklch(0.59 0.18 264)",
+          "oklch(0.7 0.15 264)",
+          "oklch(0.81 0.1 264)",
+          "oklch(0.92 0.045 264)"
+        ]
+      },
+      "indigo-foreground": {
+        "role": "primary",
+        "displayName": "靛上银白",
+        "canonical": "oklch(0.985 0.005 250)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 250)",
+          "oklch(0.26 0.004 250)",
+          "oklch(0.37 0.004 250)",
+          "oklch(0.48 0.005 250)",
+          "oklch(0.59 0.005 250)",
+          "oklch(0.7 0.004 250)",
+          "oklch(0.81 0.004 250)",
+          "oklch(0.92 0.003 250)"
+        ]
+      },
+      "indigo-bright": {
+        "role": "primary",
+        "displayName": "亮靛",
+        "canonical": "oklch(0.68 0.15 264)",
+        "tonalRamp": [
+          "oklch(0.15 0.075 264)",
+          "oklch(0.26 0.12 264)",
+          "oklch(0.37 0.15 264)",
+          "oklch(0.48 0.15 264)",
+          "oklch(0.59 0.14 264)",
+          "oklch(0.7 0.12 264)",
+          "oklch(0.81 0.08 264)",
+          "oklch(0.92 0.035 264)"
+        ]
+      },
+      "indigo-veil": {
+        "role": "primary",
+        "displayName": "靛青晕",
+        "canonical": "oklch(0.545 0.185 264 / 16%)",
+        "tonalRamp": [
+          "oklch(0.15 0.09 264)",
+          "oklch(0.26 0.15 264)",
+          "oklch(0.37 0.18 264)",
+          "oklch(0.48 0.185 264)",
+          "oklch(0.59 0.18 264)",
+          "oklch(0.7 0.15 264)",
+          "oklch(0.81 0.1 264)",
+          "oklch(0.92 0.045 264)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "冷灰白",
+        "canonical": "oklch(0.972 0.004 250)",
+        "tonalRamp": [
+          "oklch(0.15 0.002 250)",
+          "oklch(0.26 0.003 250)",
+          "oklch(0.37 0.003 250)",
+          "oklch(0.48 0.004 250)",
+          "oklch(0.59 0.004 250)",
+          "oklch(0.7 0.003 250)",
+          "oklch(0.81 0.003 250)",
+          "oklch(0.92 0.002 250)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "石墨墨字",
+        "canonical": "oklch(0.24 0.03 262)",
+        "tonalRamp": [
+          "oklch(0.15 0.015 262)",
+          "oklch(0.26 0.03 262)",
+          "oklch(0.37 0.03 262)",
+          "oklch(0.48 0.028 262)",
+          "oklch(0.59 0.025 262)",
+          "oklch(0.7 0.022 262)",
+          "oklch(0.81 0.015 262)",
+          "oklch(0.92 0.007 262)"
+        ]
+      },
+      "card-white": {
+        "role": "neutral",
+        "displayName": "纯白卡面",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.7 0 0)",
+          "oklch(0.81 0 0)",
+          "oklch(0.92 0 0)"
+        ]
+      },
+      "mist": {
+        "role": "neutral",
+        "displayName": "雾灰底",
+        "canonical": "oklch(0.945 0.008 250)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 250)",
+          "oklch(0.26 0.006 250)",
+          "oklch(0.37 0.007 250)",
+          "oklch(0.48 0.008 250)",
+          "oklch(0.59 0.008 250)",
+          "oklch(0.7 0.007 250)",
+          "oklch(0.81 0.005 250)",
+          "oklch(0.92 0.003 250)"
+        ]
+      },
+      "mist-ink": {
+        "role": "neutral",
+        "displayName": "雾灰墨",
+        "canonical": "oklch(0.52 0.035 262)",
+        "tonalRamp": [
+          "oklch(0.15 0.018 262)",
+          "oklch(0.26 0.028 262)",
+          "oklch(0.37 0.035 262)",
+          "oklch(0.48 0.035 262)",
+          "oklch(0.59 0.032 262)",
+          "oklch(0.7 0.028 262)",
+          "oklch(0.81 0.019 262)",
+          "oklch(0.92 0.009 262)"
+        ]
+      },
+      "canvas-border": {
+        "role": "neutral",
+        "displayName": "冷灰界线",
+        "canonical": "oklch(0.925 0.01 255)",
+        "tonalRamp": [
+          "oklch(0.15 0.005 255)",
+          "oklch(0.26 0.008 255)",
+          "oklch(0.37 0.009 255)",
+          "oklch(0.48 0.01 255)",
+          "oklch(0.59 0.01 255)",
+          "oklch(0.7 0.009 255)",
+          "oklch(0.81 0.006 255)",
+          "oklch(0.92 0.003 255)"
+        ]
+      },
+      "severity-i": {
+        "role": "status",
+        "displayName": "预警红（Ⅰ）",
+        "canonical": "oklch(0.53 0.19 27)",
+        "tonalRamp": [
+          "oklch(0.15 0.095 27)",
+          "oklch(0.26 0.15 27)",
+          "oklch(0.37 0.19 27)",
+          "oklch(0.48 0.19 27)",
+          "oklch(0.59 0.18 27)",
+          "oklch(0.7 0.15 27)",
+          "oklch(0.81 0.1 27)",
+          "oklch(0.92 0.045 27)"
+        ]
+      },
+      "severity-ii": {
+        "role": "status",
+        "displayName": "预警橙（Ⅱ）",
+        "canonical": "oklch(0.63 0.19 45)",
+        "tonalRamp": [
+          "oklch(0.15 0.095 45)",
+          "oklch(0.26 0.15 45)",
+          "oklch(0.37 0.19 45)",
+          "oklch(0.48 0.19 45)",
+          "oklch(0.59 0.18 45)",
+          "oklch(0.7 0.15 45)",
+          "oklch(0.81 0.1 45)",
+          "oklch(0.92 0.045 45)"
+        ]
+      },
+      "severity-iii": {
+        "role": "status",
+        "displayName": "预警黄（Ⅲ）",
+        "canonical": "oklch(0.78 0.15 90)",
+        "tonalRamp": [
+          "oklch(0.15 0.075 90)",
+          "oklch(0.26 0.12 90)",
+          "oklch(0.37 0.15 90)",
+          "oklch(0.48 0.15 90)",
+          "oklch(0.59 0.14 90)",
+          "oklch(0.7 0.12 90)",
+          "oklch(0.81 0.08 90)",
+          "oklch(0.92 0.035 90)"
+        ]
+      },
+      "severity-iv": {
+        "role": "status",
+        "displayName": "预警蓝（Ⅳ）",
+        "canonical": "oklch(0.48 0.17 262)",
+        "tonalRamp": [
+          "oklch(0.15 0.085 262)",
+          "oklch(0.26 0.14 262)",
+          "oklch(0.37 0.17 262)",
+          "oklch(0.48 0.17 262)",
+          "oklch(0.59 0.16 262)",
+          "oklch(0.7 0.13 262)",
+          "oklch(0.81 0.09 262)",
+          "oklch(0.92 0.04 262)"
+        ]
+      },
+      "severity-ink": {
+        "role": "status",
+        "displayName": "牌上墨",
+        "canonical": "oklch(0.28 0.03 60)",
+        "tonalRamp": [
+          "oklch(0.15 0.015 60)",
+          "oklch(0.26 0.03 60)",
+          "oklch(0.37 0.03 60)",
+          "oklch(0.48 0.028 60)",
+          "oklch(0.59 0.026 60)",
+          "oklch(0.7 0.022 60)",
+          "oklch(0.81 0.015 60)",
+          "oklch(0.92 0.007 60)"
+        ]
+      },
+      "amber-standby": {
+        "role": "status",
+        "displayName": "待确认琥珀",
+        "canonical": "oklch(0.75 0.15 70)",
+        "tonalRamp": [
+          "oklch(0.15 0.075 70)",
+          "oklch(0.26 0.12 70)",
+          "oklch(0.37 0.15 70)",
+          "oklch(0.48 0.15 70)",
+          "oklch(0.59 0.14 70)",
+          "oklch(0.7 0.12 70)",
+          "oklch(0.81 0.08 70)",
+          "oklch(0.92 0.035 70)"
+        ]
+      },
+      "amber-drill": {
+        "role": "signature",
+        "displayName": "演练徽标橙",
+        "canonical": "oklch(0.8 0.13 50)",
+        "tonalRamp": [
+          "oklch(0.15 0.065 50)",
+          "oklch(0.26 0.1 50)",
+          "oklch(0.37 0.13 50)",
+          "oklch(0.48 0.13 50)",
+          "oklch(0.59 0.12 50)",
+          "oklch(0.7 0.1 50)",
+          "oklch(0.81 0.07 50)",
+          "oklch(0.92 0.03 50)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "页面标题（宋体）",
+        "purpose": "画布页面标题（PageHeader）、空态标题与品牌名——思源宋体（Noto Serif SC 自托管），回退 Songti SC / SimSun。"
+      },
+      "body": {
+        "displayName": "正文",
+        "purpose": "画布按钮与正文文本。"
+      },
+      "caption": {
+        "displayName": "辅助说明",
+        "purpose": "页面职责一句、导航条目、空态描述。"
+      },
+      "label": {
+        "displayName": "字段标签",
+        "purpose": "状态条字段标签（「当前演练」「阶段」「模拟」「真实」）。"
+      },
+      "micro": {
+        "displayName": "微标签",
+        "purpose": "徽标、导航分组标题、单机标识——靠 0.2em–0.3em 字距建立存在感。"
+      },
+      "mono-clock": {
+        "displayName": "仪表数字",
+        "purpose": "模拟时钟 18px 主仪表与 14px 弱化档、真实钟 12px；IBM Plex Mono（自托管），一切跳动数字一律此栈 + tabular-nums。"
+      },
+      "plate": {
+        "displayName": "牌上宋体",
+        "purpose": "等级信号牌与「已确认」戳——全站实心彩色块上的文字一律宋体（公文即视感）。"
+      }
+    },
+    "motion": [
+      {
+        "name": "plate-in",
+        "value": "plate-in 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "签名动作「挂牌」：等级信号牌升起落定（translateY 5px→0、透明度 0.35→1）；等级变化换牌时重放；prefers-reduced-motion 下禁用。"
+      },
+      {
+        "name": "nav-collapse",
+        "value": "width 0.2s ease",
+        "purpose": "导航栏 220px↔64px 折叠展开的宽度过渡。"
+      },
+      {
+        "name": "color-state",
+        "value": "color/background-color/border-color 0.15s ease",
+        "purpose": "导航项、按钮、链接的颜色状态过渡（transition-colors 默认时长）。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "purpose": "状态条次级信息显隐（演练名、发起按钮、空闲态真实钟）。"
+      },
+      {
+        "name": "md",
+        "value": "768px",
+        "purpose": "「进入工作区」按钮与运行态真实钟显示。"
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "purpose": "状态条字段标签（当前演练/阶段/模拟）与分隔线显示。"
+      },
+      {
+        "name": "xl",
+        "value": "1280px",
+        "purpose": "导航默认折叠阈值（小于则折叠为图标栏）；演练名解除截断。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "画布唯一主动作实心按钮：靛青底、提亮 hover。",
+      "html": "<button class=\"ds-btn-primary\">发起演练</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; white-space: nowrap; height: 36px; padding: 0 16px; border: none; border-radius: calc(var(--radius) * 0.6); background: var(--primary); color: var(--primary-foreground); font-size: 14px; font-weight: 500; cursor: pointer; transition: filter 0.15s ease; } .ds-btn-primary:hover { filter: brightness(1.1); } .ds-btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "画布次级描边按钮：透明底、冷灰界线描边、hover 雾灰底。",
+      "html": "<button class=\"ds-btn-outline\">查看复盘报告</button>",
+      "css": ".ds-btn-outline { display: inline-flex; align-items: center; white-space: nowrap; height: 36px; padding: 0 16px; border: 1px solid var(--input); border-radius: calc(var(--radius) * 0.6); background: transparent; color: var(--foreground); font-size: 14px; cursor: pointer; transition: background-color 0.15s ease; } .ds-btn-outline:hover { background: var(--secondary); } .ds-btn-outline:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }"
+    },
+    {
+      "name": "Shell Outline Button",
+      "kind": "button",
+      "refersTo": "shell-button-outline",
+      "description": "深壳上的描边小按钮（暂停/恢复/折叠导航）：靛青描边、hover 靛青晕底。",
+      "html": "<button class=\"ds-shell-btn\"><svg class=\"ds-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"14\" y=\"4\" width=\"4\" height=\"16\" rx=\"1\"/><rect x=\"6\" y=\"4\" width=\"4\" height=\"16\" rx=\"1\"/></svg>暂停</button>",
+      "css": ".ds-shell-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; height: 28px; padding: 0 12px; border: 1px solid var(--shell-accent); border-radius: calc(var(--radius) * 0.6); background: transparent; color: oklch(0.935 0.015 262 / 0.8); font-size: 12px; cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease; } .ds-shell-btn:hover { background: var(--shell-accent-soft); color: var(--shell-foreground); } .ds-shell-btn:disabled { opacity: 0.5; cursor: not-allowed; } .ds-shell-btn:focus-visible { outline: 2px solid var(--shell-accent-bright); outline-offset: 1px; } .ds-icon { width: 14px; height: 14px; flex: none; }"
+    },
+    {
+      "name": "Shell Solid Button",
+      "kind": "button",
+      "refersTo": "shell-button-solid",
+      "description": "深壳上状态条内的唯一实心动作（进入工作区）：靛青底白字。",
+      "html": "<button class=\"ds-shell-btn-solid\">进入工作区</button>",
+      "css": ".ds-shell-btn-solid { display: inline-flex; align-items: center; white-space: nowrap; height: 28px; padding: 0 12px; border: none; border-radius: calc(var(--radius) * 0.6); background: var(--shell-accent); color: #fff; font-size: 12px; font-weight: 500; cursor: pointer; transition: filter 0.15s ease; } .ds-shell-btn-solid:hover { filter: brightness(1.1); } .ds-shell-btn-solid:focus-visible { outline: 2px solid var(--shell-accent-bright); outline-offset: 1px; }"
+    },
+    {
+      "name": "Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "深壳导航条目：活动项靛青晕底 + 白字 + 亮靛图标，非活动 70% 银白。",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item\" href=\"#\"><svg class=\"ds-nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m12 7 0 5\"/><path d=\"m12 15 .01 0\"/></svg><span>事件监测中心</span></a><a class=\"ds-nav-item ds-nav-item-active\" href=\"#\" aria-current=\"page\"><svg class=\"ds-nav-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m12 7 0 5\"/><path d=\"m12 15 .01 0\"/></svg><span>综合指挥台</span></a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; width: 220px; padding: 8px 0; background: var(--shell); } .ds-nav-item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 16px; font-size: 13px; color: oklch(0.935 0.015 262 / 0.7); text-decoration: none; transition: background-color 0.15s ease, color 0.15s ease; } .ds-nav-item:hover { background: oklch(0.545 0.185 264 / 9.6%); color: var(--shell-foreground); } .ds-nav-item:focus-visible { outline: 2px solid var(--shell-accent-bright); outline-offset: -2px; } .ds-nav-item-active { background: var(--shell-accent-soft); color: #fff; font-weight: 600; } .ds-nav-item-active .ds-nav-icon { color: var(--shell-accent-bright); } .ds-nav-icon { width: 16px; height: 16px; flex: none; }"
+    },
+    {
+      "name": "Severity Plate",
+      "kind": "custom",
+      "refersTo": "severity-plate-i",
+      "description": "等级信号牌（签名件）：色牌 + 图标 + 文字三件套，挂牌动效 plate-in；Ⅱ/Ⅲ 亮底配墨字。",
+      "html": "<div class=\"ds-plates\"><span class=\"ds-plate ds-plate-i\"><svg class=\"ds-plate-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m12 7 0 5\"/><path d=\"m12 15 .01 0\"/></svg>Ⅰ 重大</span><span class=\"ds-plate ds-plate-ii\"><svg class=\"ds-plate-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m12 7 0 5\"/><path d=\"m12 15 .01 0\"/></svg>Ⅱ 较大</span></div>",
+      "css": "@keyframes ds-plate-in { from { transform: translateY(5px); opacity: 0.35; } to { transform: none; opacity: 1; } } .ds-plates { font-family: 'Noto Serif SC', 'Songti SC', 'SimSun', serif; display: flex; gap: 8px; align-items: center; } .ds-plate { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 0.25rem; font-size: 12px; font-weight: 700; letter-spacing: 0.025em; animation: ds-plate-in 0.3s cubic-bezier(0.16, 1, 0.3, 1); } .ds-plate-icon { width: 14px; height: 14px; flex: none; } .ds-plate-i { background: var(--severity-i); color: #fff; } .ds-plate-ii { background: var(--severity-ii); color: var(--severity-ink); } .ds-plate-iii { background: var(--severity-iii); color: var(--severity-ink); } .ds-plate-iv { background: var(--severity-iv); color: #fff; } @media (prefers-reduced-motion: reduce) { .ds-plate { animation: none; } }"
+    },
+    {
+      "name": "Drill Tag",
+      "kind": "chip",
+      "refersTo": "drill-tag",
+      "description": "「模拟演练」常驻徽标（签名件）：壳上亮橙描边变体，任何视口不隐藏。",
+      "html": "<span class=\"ds-drill-tag\">模拟演练</span>",
+      "css": ".ds-drill-tag { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid oklch(0.75 0.14 50); border-radius: calc(var(--radius) * 0.6); color: oklch(0.8 0.13 50); font-size: 10px; line-height: 17px; font-weight: 500; letter-spacing: 0.2em; white-space: nowrap; }"
+    },
+    {
+      "name": "Sim Clock",
+      "kind": "custom",
+      "refersTo": "sim-clock",
+      "description": "双钟并列（签名件）：模拟钟 18px 主仪表 + 真实钟 12px 弱化变体，等宽 tabular-nums。",
+      "html": "<div class=\"ds-clocks\"><span class=\"ds-clock-label\">模拟</span><time class=\"ds-sim-clock\">14:32:07</time><span class=\"ds-clock-sep\"></span><span class=\"ds-clock-label\">真实</span><time class=\"ds-real-clock\">09:15:42</time></div>",
+      "css": ".ds-clocks { display: flex; align-items: center; gap: 8px; background: var(--shell); padding: 8px 12px; border-radius: calc(var(--radius) * 0.6); } .ds-clock-label { font-size: 11px; color: var(--shell-muted); } .ds-sim-clock, .ds-real-clock { font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; letter-spacing: 0.05em; } .ds-sim-clock { font-size: 18px; font-weight: 600; color: var(--shell-foreground); } .ds-real-clock { font-size: 12px; color: oklch(0.935 0.015 262 / 0.85); } .ds-clock-sep { width: 1px; height: 16px; background: var(--shell-border); }"
+    },
+    {
+      "name": "Page Header",
+      "kind": "card",
+      "refersTo": "page-header",
+      "description": "画布页面头：白卡面、60px 最小高、底 1px 冷灰界线，左标题右操作区。",
+      "html": "<header class=\"ds-page-header\"><div class=\"ds-page-header-main\"><h2>综合指挥台</h2><p>全局态势一屏总览：演练状态、系统健康与快速入口</p></div></header>",
+      "css": ".ds-page-header { display: flex; min-height: 60px; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--card); } .ds-page-header-main { min-width: 0; } .ds-page-header h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.025em; color: var(--card-foreground); } .ds-page-header p { margin: 2px 0 0; font-size: 13px; color: var(--muted-foreground); }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "card",
+      "refersTo": "empty-state",
+      "description": "空态：雾灰圆底图标 + 标题 + 描述 + 行动区，居中呼吸（py-20）。",
+      "html": "<div class=\"ds-empty-state\"><div class=\"ds-empty-icon\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m12 7 0 5\"/><path d=\"m12 15 .01 0\"/></svg></div><h3>暂无运行中的演练</h3><p>配置场景与随机种子，发起一场可复现的模拟推演。平台内所有事件均为演练数据，不涉及真实警情。</p></div>",
+      "css": ".ds-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; text-align: center; } .ds-empty-icon { display: flex; width: 56px; height: 56px; align-items: center; justify-content: center; margin-bottom: 20px; border-radius: 9999px; background: var(--secondary); } .ds-empty-icon svg { width: 24px; height: 24px; color: var(--muted-foreground); } .ds-empty-state h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--foreground); } .ds-empty-state p { margin: 8px 0 0; max-width: 28rem; font-size: 13px; line-height: 1.625; color: var(--muted-foreground); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "信号牌指挥台（The Signal-Plate Command Deck）",
+    "overview": "演练即一次预警发布：等级是挂出来的牌，人工确认是盖下去的戳。整套界面是一间现代企业级应急指挥中心——专业、严谨、精致：左侧一根深藏青石墨的骨架立住指挥台的气场，冷灰白的画布保证课堂投影等亮环境下的可读性；仪表感不来自装饰，而来自等宽数字与一根粗细的规则线。\n\n世界由三层恒定材质构成：壳层恒深（发布台藏青，带彩度、绝不退化为中性灰黑），画布恒浅（冷灰白），卡面纯白。深度靠明度阶梯与留白表达，不靠阴影。彩色被严格管制：靛青只做交互，预警红/橙/黄/蓝只出现在等级信号牌与告警处，且永远携带图标与文字。\n\n确认的视觉反参照（不做什么）：真实警情系统的拟真外观、游戏化元素、中性灰黑通用 SaaS 侧栏、用颜色单独承载状态。",
+    "keyCharacteristics": [
+      "深藏青石墨壳 + 冷灰白画布的双层恒定材质，明度分层替代阴影",
+      "等级四色严格限于信号牌与告警，图标 + 文字 + 色牌三件套同时出现",
+      "仪表感来自等宽数字（mono + tabular-nums），不来自装饰性图形",
+      "结构线一律 1px 一根粗细，分区靠留白不靠框线堆叠",
+      "按钮描边为主，实心只留给唯一主动作",
+      "「模拟演练」徽标常驻任何视口，绝不与真实警情混淆"
+    ],
+    "rules": [
+      {
+        "name": "挂牌法则（The Signal-Plate Rule）",
+        "body": "等级四色只出现在信号牌与告警处，且永远是「色牌 + 图标 + 文字」三件套同时出现。任何地方不得只用一块色表达等级，也不得把等级四色挪作装饰、图表或普通强调。",
+        "section": "colors"
+      },
+      {
+        "name": "等宽仪表法则（The Mono-Gauge Rule）",
+        "body": "一切会跳动的数字（时钟、计数、编号、时长）一律等宽栈 + tabular-nums。仪表感来自数字不跳宽，不来自装饰性图形。",
+        "section": "typography"
+      },
+      {
+        "name": "双钟法则（The Two-Clocks Rule）",
+        "body": "模拟时钟是全局唯一时钟源，只此一处跳动；真实钟与它并列且必须带「真实」来源标注。空间不够时真实钟让位，模拟钟与「模拟演练」徽标永不退场。",
+        "section": "layout"
+      },
+      {
+        "name": "一根线法则（The One-Line Rule）",
+        "body": "结构线永远 1px 一根粗细。要分区，先加留白；留白不够，加一根 1px 线；永远不要框线套框线。",
+        "section": "shapes"
+      },
+      {
+        "name": "常驻标识法则（The Standing-Badge Rule）",
+        "body": "「模拟演练」徽标常驻所有演练相关界面与状态条，任何视口、任何宽度都不隐藏。与真实警情混淆的代价大于一切布局妥协——空间不够时先让真实钟让位。",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do 挂等级色时永远「色牌 + 图标 + 文字」三件套（挂牌法则）。",
+      "Do 一切跳动数字用等宽栈 + tabular-nums（等宽仪表法则）。",
+      "Do 模拟钟为全局唯一时钟源；真实钟并列并标注「真实」来源（双钟法则）。",
+      "Do 「模拟演练」徽标常驻所有演练相关界面，任何视口不隐藏。",
+      "Do 分区先加留白（分组 20px、页面留白 24px），线只用 1px 一根粗细（一根线法则）。",
+      "Do 壳层保持藏青彩度（hue 264），深而不灰。",
+      "Do 行灯状态点永远伴随文字（琥珀点 + 「等待人工确认」）。"
+    ],
+    "donts": [
+      "Don't 用颜色单独承载状态——色永远搭配文字与图标。",
+      "Don't 引入真实警情系统的拟真外观或任何游戏化元素。",
+      "Don't 使用 box-shadow 抬升表面——分层调明度（壳 0.23 / 画布 0.972 / 卡面 1.0）。",
+      "Don't 框线套框线、卡片套卡片。",
+      "Don't 把等级四色挪作装饰、图表或普通强调色。",
+      "Don't 把壳做成中性灰黑通用 SaaS 侧栏。",
+      "Don't 深化画布或给壳层做浅色变体——壳恒深、画布恒浅是本世界的材质法则。"
+    ]
+  }
+}

@@ -1,0 +1,231 @@
+{
+  "title": "选择壳层视觉世界",
+  "question": "深色骨架 + 浅色画布已确认（亮环境投影）。这一轮选壳层的风格语言——骰子指定了「信号牌指挥台」，可保留、换备选或重发。",
+  "options": [
+    {
+      "id": "assigned",
+      "kind": "assigned",
+      "label": "信号牌指挥台",
+      "kicker": "THE ROLL",
+      "lineage": "官方突发事件预警发布语言（红橙黄蓝信号牌）",
+      "thesis": "演练即一次预警发布：等级是挂出来的牌，确认是盖下去的戳。",
+      "palette": [
+        "#1a2340",
+        "#f4f6f9",
+        "#e8590c",
+        "#3b5bdb"
+      ],
+      "materials": [
+        "等级信号牌",
+        "公告编号（等宽数字）",
+        "确认戳",
+        "一根粗细的规则线"
+      ],
+      "viewport": "深藏青导航与状态条夹住冷灰白画布，顶部挂 Ⅱ 级橙色信号牌与跳动的等宽模拟时钟。",
+      "risk": "等级色只做真工作，做满会变玩具告警板；官方感靠排版纪律，不靠拟真公文。",
+      "raised": [
+        {
+          "from": "星图册",
+          "raise": "焦点红圈——全局唯一焦点（当前事件、工作中的智能体）以一圈细红环标记，全站只一处。"
+        },
+        {
+          "from": "中轨排版",
+          "raise": "规则线引擎——全站结构线一根粗细、设备像素对齐，分区靠留白与地色，不靠框线堆叠。"
+        },
+        {
+          "from": "流媒体墙",
+          "raise": "行级 dimming——智能体编队与任务列表中活跃行满亮、空闲行压暗。"
+        },
+        {
+          "from": "翻牌屏",
+          "raise": "行灯状态——每行左缘一枚色灯：琥珀=待确认、红=异常，永远搭配文字。"
+        }
+      ],
+      "html": ".impeccable/mocks/decision/shell-assigned.html"
+    },
+    {
+      "id": "model-pick",
+      "kind": "pick",
+      "label": "编目档案馆",
+      "kicker": "IMPECCABLE'S PICK",
+      "lineage": "藏书楼函套与档案编目",
+      "thesis": "演练即入藏：每场推演是一件编号案卷，复盘是编目页。",
+      "palette": [
+        "#26325c",
+        "#f5f2e8",
+        "#22252d",
+        "#c0392b"
+      ],
+      "materials": [
+        "函套织纹",
+        "米白签条",
+        "仿宋签题",
+        "朱砂小印"
+      ],
+      "viewport": "深靛函套骨架夹米白画布，状态条是卷宗眉头：编号、等级印、等宽钟。",
+      "risk": "最不「指挥中心」的方向：紧迫感全靠排版密度与小面积朱印红撑，一松就像文献管理系统。",
+      "html": ".impeccable/mocks/decision/shell-pick.html"
+    },
+    {
+      "id": "challenger-splitflap",
+      "kind": "challenger",
+      "catalogId": "signals-instruments-split-flap-concourse",
+      "label": "行灯时刻台",
+      "verdict": "competitive",
+      "lineage": "车站翻牌信息屏与行灯",
+      "thesis": "平台是一面站务信息屏：时间线是时刻表，任务是行灯，状态按行刷新。",
+      "palette": [
+        "#17181a",
+        "#f2f2f0",
+        "#e8a020",
+        "#b3382e"
+      ],
+      "materials": [
+        "固定字符格",
+        "行灯",
+        "拉丝钢分隔"
+      ],
+      "viewport": "炭黑导航 + 翻牌钟状态条，浅画布里时间线像时刻表逐行下行。",
+      "case": "识别度最高的世界——学生不用学就会读「行」；输在翻牌语法盖不住发布与确认的闭环。",
+      "risk": "翻牌动效做全站就是戏服；深板面在亮环境投影下会发灰。",
+      "html": ".impeccable/mocks/decision/shell-splitflap.html",
+      "hero": "https://impeccable.style/worlds/cards/signals-instruments-split-flap-concourse-hero.webp"
+    },
+    {
+      "id": "challenger-centrerail",
+      "kind": "challenger",
+      "catalogId": "rw-centre-rail-reference-setting",
+      "label": "脊柱校样台",
+      "verdict": "competitive",
+      "lineage": "中缝键列的参考书排版",
+      "thesis": "处置时间线是全书脊柱：朱砂键沿中轨下行，确认节点是朱砂 detent。",
+      "palette": [
+        "#1f2229",
+        "#c33d2e",
+        "#f7f5ef"
+      ],
+      "materials": [
+        "1px 规则线引擎",
+        "detent 状态记号（空心/实心/划穿）",
+        "小号标签"
+      ],
+      "viewport": "铁墨壳 + 骨白画布，时间线是中缝键列，待确认节点是空心朱键。",
+      "case": "把「可解释、留痕」的工程气质穿上身；输在受众母语不是学术排版。",
+      "risk": "几乎无彩，指挥中心气场最弱；朱砂用过量会变成试卷。",
+      "html": ".impeccable/mocks/decision/shell-centrerail.html",
+      "hero": "https://impeccable.style/worlds/cards/rw-centre-rail-reference-setting-hero.webp"
+    },
+    {
+      "id": "challenger-staratlas",
+      "kind": "challenger",
+      "catalogId": "notation-diagram-systems-star-atlas",
+      "label": "星图册",
+      "verdict": "declined",
+      "lineage": "天文星图与坐标网格",
+      "thesis": "智能体集群是星座：点径分忙闲，红环圈住焦点。",
+      "palette": [
+        "#101a30",
+        "#e8ecf4",
+        "#c4463a"
+      ],
+      "materials": [
+        "坐标网格",
+        "等级点径"
+      ],
+      "case": "星图不是应急受众的母语，识别与清晰两轴皆输。",
+      "kept": "焦点红圈——已并入主卡。",
+      "hero": "https://impeccable.style/worlds/cards/notation-diagram-systems-star-atlas-hero.webp"
+    },
+    {
+      "id": "challenger-streamwall",
+      "kind": "challenger",
+      "catalogId": "pop-culture-shelf-streaming-title-card-wall",
+      "label": "流媒体卡片墙",
+      "verdict": "declined",
+      "lineage": "流媒体首页的横滚行",
+      "thesis": "内容排成横滚行，聚焦的行亮起来，其余暗下去。",
+      "palette": [
+        "#141414",
+        "#e6e6e6",
+        "#3b82f6"
+      ],
+      "materials": [
+        "固定比例卡",
+        "行级 dimming"
+      ],
+      "case": "等宽卡片墙是本项目设计规范的明令反目标。",
+      "kept": "行级 dimming——已并入主卡。",
+      "hero": "https://impeccable.style/worlds/cards/pop-culture-shelf-streaming-title-card-wall-hero.webp"
+    },
+    {
+      "id": "challenger-zoomap",
+      "kind": "challenger",
+      "catalogId": "aww2-zoo-gardens-guide-map",
+      "label": "导览色块图",
+      "verdict": "declined",
+      "lineage": "园区导览图的扁平色瓣",
+      "thesis": "每个区是一块膨胀的色瓣，海岸线做全部分割。",
+      "palette": [
+        "#8ed462",
+        "#f5f1e4",
+        "#2c2e2a"
+      ],
+      "materials": [
+        "扁平色块",
+        "overshoot 动效"
+      ],
+      "case": "游戏化外观与「专业、严谨」的产品方向冲突。",
+      "kept": "分区靠地色与形状，不靠框线——已并入主卡的规则线纪律。",
+      "hero": "https://impeccable.style/worlds/cards/aww2-zoo-gardens-guide-map-hero.webp"
+    },
+    {
+      "id": "challenger-bitmap",
+      "kind": "challenger",
+      "catalogId": "emigre-bitmap-specimen",
+      "label": "位图字样张",
+      "verdict": "declined",
+      "lineage": "Emigre 位字海报样张",
+      "thesis": "粗位图数字做海报级时钟，低分辨率即美学。",
+      "palette": [
+        "#f4f4f0",
+        "#141414",
+        "#2456d6"
+      ],
+      "materials": [
+        "点阵数字",
+        "整像素缩放"
+      ],
+      "case": "位图小字在亮环境投影下不可读。",
+      "kept": "等宽数字整像素对齐——已并入主卡。",
+      "hero": "https://impeccable.style/worlds/cards/emigre-bitmap-specimen-hero.webp"
+    }
+  ],
+  "reroll": {
+    "registers": [
+      "safer",
+      "bolder"
+    ]
+  },
+  "buildPath": {
+    "value": "code"
+  },
+  "canon": true,
+  "canonCard": {
+    "kind": "canon",
+    "label": "标准深色指挥台",
+    "thesis": "类别标准打直：深灰侧栏 + 蓝强调的现代仪表台，标准组件直出。",
+    "palette": [
+      "#0f172a",
+      "#ffffff",
+      "#2563eb"
+    ],
+    "materials": [
+      "干净网格",
+      "标准 UI 组件"
+    ],
+    "viewport": "你在成熟后台产品里见过的那个布局，满工艺执行。",
+    "risk": "与任何后台系统不可区分，没有记忆点。",
+    "html": ".impeccable/mocks/decision/shell-canon.html"
+  },
+  "steer": true
+}

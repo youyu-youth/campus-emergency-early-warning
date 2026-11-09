@@ -1,69 +1,41 @@
-import Image from "next/image";
+import Link from "next/link";
+import { Siren } from "lucide-react";
+
+import { EmptyState } from "@/components/feedback/empty-state";
+import { DrillTag } from "@/components/status/drill-tag";
+import { PageHeader } from "@/components/shell/page-header";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <>
+      <PageHeader
+        title="综合指挥台"
+        description="全局态势一屏总览：演练状态、系统健康与快速入口"
+      />
+      {/* 空闲态开场引导(docs/design.md §4.1);演练概要面板待数据接入轮实现 */}
+      <EmptyState
+        icon={Siren}
+        title="暂无运行中的演练"
+        description="配置场景与随机种子，发起一场可复现的模拟推演。平台内所有事件均为演练数据，不涉及真实警情。"
+        action={
+          <>
+            <DrillTag variant="canvas" />
+            <Link
+              href="/simulation"
+              className="flex h-9 items-center whitespace-nowrap rounded-sm bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:brightness-110"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              发起演练
+            </Link>
+            <Link
+              href="/reports"
+              className="flex h-9 items-center whitespace-nowrap rounded-sm border border-input px-4 text-sm transition-colors hover:bg-secondary"
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+              查看复盘报告
+            </Link>
+          </>
+        }
+        className="flex-1"
+      />
+    </>
   );
 }
