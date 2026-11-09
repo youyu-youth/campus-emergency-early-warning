@@ -70,10 +70,42 @@ export function getActiveDrills(db: Db): DrillRow[] {
     .all() as DrillRow[];
 }
 
+/** 至多一场 running(单事件焦点不变式),重启恢复用;无则 undefined */
+export function getRunningDrill(db: Db): DrillRow | undefined {
+  return db
+    .prepare("SELECT * FROM drills WHERE status = 'running' ORDER BY created_at LIMIT 1")
+    .get() as DrillRow | undefined;
+}
+
+/** 至多一场确认等待中(单事件焦点不变式),重启接续用;无则 undefined */
+export function getAwaitingConfirmationDrillId(db: Db): string | undefined {
+  const row = db
+    .prepare("SELECT id FROM drills WHERE status = 'awaiting_confirmation' ORDER BY created_at LIMIT 1")
+    .get() as { id: string } | undefined;
+  return row?.id;
+}
+
+/** 演练最后落库动作的真实时刻(重启恢复的时钟冻结点);无节点则 null */
+export function getLastTimelineActivityMs(db: Db, drillId: string): number | null {
+  const row = db
+    .prepare("SELECT MAX(real_time) AS latest FROM timeline_nodes WHERE drill_id = ?")
+    .get(drillId) as { latest: string | null };
+  return row.latest ? Date.parse(row.latest) : null;
+}
+
 /** 演练收尾终态:写入规则评分与结束时刻(状态机校验由调用方负责) */
 export function finishDrill(db: Db, id: string, score: number, endedAt: string): void {
   db.prepare("UPDATE drills SET score = ?, ended_at = ?, updated_at = ? WHERE id = ?").run(
     score,
+    endedAt,
+    new Date().toISOString(),
+    id,
+  );
+}
+
+/** 演练终止终态:只写结束时刻,不评分(状态机校验由调用方负责) */
+export function abortDrill(db: Db, id: string, endedAt: string): void {
+  db.prepare("UPDATE drills SET ended_at = ?, updated_at = ? WHERE id = ?").run(
     endedAt,
     new Date().toISOString(),
     id,

@@ -1245,3 +1245,186 @@ describe("推演运行器 · 复盘段收尾(缝 1)", () => {
   });
 });
 
+describe("推演运行器 · 控制与恢复(缝 1)", () => {
+  it("暂停/恢复:状态与模拟时钟正确流转,时间线节点保留,暂停期间 tick 不推进", async () => {
+    const db = openDatabase(":memory:");
+    const model = fullAutoModel();
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+
+    // 推进到感知段有产出后暂停
+    realNow.t += 3_000;
+    await runner.tick();
+    const nodesBeforePause = listTimelineByDrill(db, drillId).length;
+    expect(nodesBeforePause).toBeGreaterThan(0);
+
+    realNow.t += 2_000;
+    await runner.pause();
+    expect(runner.status).toBe("paused");
+    expect((JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState).running).toBe(false);
+
+    // 暂停期间真实时间前进 60 秒,tick 不推进、模拟时钟冻结、时间线不新增
+    realNow.t += 60_000;
+    await runner.tick();
+    expect(runner.status).toBe("paused");
+    expect(listTimelineByDrill(db, drillId)).toHaveLength(nodesBeforePause);
+    await expect(runner.pause()).rejects.toThrow(/暂停/); // 重复暂停被拒
+
+    // 恢复:时钟从冻结点续算(不含停机的 60 秒),推演继续推进
+    realNow.t += 5_000;
+    await runner.resume();
+    expect(runner.status).toBe("running");
+    const clockAfterResume = JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState;
+    expect(clockAfterResume.running).toBe(true);
+    expect(clockAfterResume.lastRealAt).toBe(realNow.t);
+
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("completed");
+    // 时间线完整(感知→复盘全程节点都在)
+    const nodes = listTimelineByDrill(db, drillId);
+    expect(nodes.length).toBeGreaterThan(nodesBeforePause);
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
+    db.close();
+  });
+
+  it("调速:运行中变速即时生效且已累计模拟时间不受影响", async () => {
+    const db = openDatabase(":memory:");
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+
+    // 60 倍速跑 10 秒真实 = 600 秒模拟
+    realNow.t += 10_000;
+    await runner.tick();
+    const before = JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState;
+    expect(before.speed).toBe(60);
+
+    // 调到 120 倍速:当前段结算,已累计不变,新段以新倍速计
+    await runner.setSpeed(120);
+    const after = JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState;
+    expect(after.speed).toBe(120);
+    expect(after.running).toBe(true);
+    expect(after.simElapsedMs).toBe(600_000); // 旧段 10s×60 全部结算入累计
+    expect(after.lastRealAt).toBe(realNow.t);
+
+    // 暂停态调速:只改倍速不动累计
+    await runner.pause();
+    await runner.setSpeed(30);
+    const paused = JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState;
+    expect(paused.speed).toBe(30);
+    expect(paused.simElapsedMs).toBe(600_000);
+
+    // 非法倍速被拒
+    await expect(runner.setSpeed(0)).rejects.toThrow(/倍速/);
+    await runner.resume();
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("completed");
+    db.close();
+  });
+
+  it("终止:进入 aborted 终态,ended_at 落库,后续控制被拒,落库数据完整保留", async () => {
+    const db = openDatabase(":memory:");
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+    realNow.t += 3_000;
+    await runner.tick();
+    const nodesBeforeAbort = listTimelineByDrill(db, drillId).length;
+
+    realNow.t += 2_000;
+    await runner.abort();
+    expect(runner.status).toBe("aborted");
+    const drill = getDrill(db, drillId)!;
+    expect(drill.status).toBe("aborted");
+    expect(drill.ended_at).not.toBeNull();
+    expect(drill.score).toBeNull(); // 终止不评分
+
+    // 终态后控制与推进全部被拒,落库数据不再变化
+    realNow.t += 60_000;
+    await runner.tick();
+    await expect(runner.pause()).rejects.toThrow(/aborted|终态/);
+    await expect(runner.resume()).rejects.toThrow(/aborted|终态/);
+    await expect(runner.abort()).rejects.toThrow(/aborted|终态/);
+    expect(listTimelineByDrill(db, drillId).length).toBeGreaterThan(nodesBeforeAbort); // 仅新增终止留痕
+    const abortNodes = listTimelineByDrill(db, drillId).filter((n) => n.node_type === "operator_action");
+    expect(abortNodes).toHaveLength(1);
+    expect(abortNodes[0]!.title).toContain("终止");
+
+    // 终态演练不再阻塞发起新演练
+    const second = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    await expect(second.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60, autoConfirm: true })).resolves.toBeDefined();
+    db.close();
+  });
+
+  it("重启接续:确认等待中崩溃的演练保持原状被绑定,新进程可继续确认推进(不锁死)", async () => {
+    const db = openDatabase(":memory:");
+    const model = fullAutoModel();
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60 });
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("awaiting_confirmation"); // 定级确认点
+
+    // 模拟进程崩溃重启:新实例接续确认等待中的演练(保持 awaiting_confirmation,时钟已停)
+    realNow.t += 120_000;
+    const reborn = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    expect(reborn.recoverInterruptedDrills()).toBe(1);
+    expect(reborn.status).toBe("awaiting_confirmation");
+    expect(reborn.drillId).toBe(drillId);
+
+    // 新进程可继续确认流程直至完成(且不再阻塞发起新演练)
+    await reborn.confirmGrading({});
+    await driveUntilNotRunning(reborn, realNow);
+    await reborn.confirmDispatch({});
+    await driveUntilNotRunning(reborn, realNow);
+    await reborn.confirmNotification();
+    await driveUntilNotRunning(reborn, realNow);
+    expect(reborn.status).toBe("completed");
+    db.close();
+  });
+
+  it("重启恢复:原 running 演练恢复为 paused,时钟冻结在落库状态;手动恢复后续算且可跑完", async () => {
+    const db = openDatabase(":memory:");
+    const realNow = { t: Date.parse("2026-11-08T06:00:00.000Z") };
+    const runner = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60, autoConfirm: true });
+    realNow.t += 3_000;
+    await runner.tick();
+    const nodesBeforeCrash = listTimelineByDrill(db, drillId).length;
+    expect(nodesBeforeCrash).toBeGreaterThan(0);
+    const clockBeforeCrash = JSON.parse(getDrill(db, drillId)!.clock_state) as ClockState;
+    expect(clockBeforeCrash.running).toBe(true);
+
+    // 模拟进程崩溃重启:新运行器实例恢复中断演练(真实时间已前进 5 分钟)
+    realNow.t += 300_000;
+    const reborn = new DrillRunner({ db, model: fullAutoModel(), now: () => realNow.t });
+    const recoveredCount = reborn.recoverInterruptedDrills();
+    expect(recoveredCount).toBe(1);
+    expect(reborn.status).toBe("paused");
+    const drill = getDrill(db, drillId)!;
+    expect(drill.status).toBe("paused");
+    // 时钟冻结在落库状态:累计值回到落库时刻,停机的 5 分钟不计入模拟时间
+    const frozen = JSON.parse(drill.clock_state) as ClockState;
+    expect(frozen.running).toBe(false);
+    expect(frozen.simElapsedMs).toBeLessThanOrEqual(clockBeforeCrash.simElapsedMs + 3_000 * 60);
+    expect(frozen.simElapsedMs).toBeGreaterThan(0);
+    // 时间线不丢节点(仅新增 1 条「进程重启」恢复留痕)
+    const nodesAfterRecover = listTimelineByDrill(db, drillId);
+    expect(nodesAfterRecover).toHaveLength(nodesBeforeCrash + 1);
+    expect(nodesAfterRecover[nodesAfterRecover.length - 1]!.title).toContain("进程重启");
+    // 无中断演练时重复调用幂等
+    expect(reborn.recoverInterruptedDrills()).toBe(0);
+
+    // 操作员手动恢复:时钟从冻结点续算,推演跑完全程
+    realNow.t += 10_000;
+    await reborn.resume();
+    expect(reborn.status).toBe("running");
+    await driveUntilNotRunning(reborn, realNow);
+    expect(reborn.status).toBe("completed");
+    expect(getEventByDrillId(db, drillId)!.status).toBe("closed");
+    expect(getDrill(db, drillId)!.score).not.toBeNull();
+    db.close();
+  });
+});
+

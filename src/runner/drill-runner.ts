@@ -13,13 +13,17 @@ import type { ReviewInput } from "../agents/review";
 import type { AgentChatModel } from "../agents/model";
 import type { Db } from "../db/client";
 import {
+  abortDrill,
   closeEvent,
   finishDrill,
   finishNotification,
   getActiveDrills,
+  getAwaitingConfirmationDrillId,
   getDrill,
   getEventByDrillId,
+  getLastTimelineActivityMs,
   getGraphRunByDrillId,
+  getRunningDrill,
   getTimelineNode,
   insertDrill,
   insertSignal,
@@ -57,6 +61,7 @@ import {
   formatSimClock,
   pauseClock,
   resumeClock,
+  setSpeed as setClockSpeed,
   startClock,
   simOffsetMs,
   simTimeIso,
@@ -801,6 +806,130 @@ export class DrillRunner {
       nodeId,
       JSON.stringify({ ...detail, publishes: [...(detail.publishes ?? []), ...results] }),
     );
+  }
+
+  // —— 操作员控制(暂停/恢复/调速/终止) ——
+
+  /** 操作员暂停:演练转 paused、模拟时钟同步停走;确认点本身已停走,无需叠加暂停 */
+  async pause(): Promise<void> {
+    const drill = this.current();
+    if (!drill) throw new Error("尚未发起演练,无可暂停的推演");
+    if (drill.status !== "running") {
+      throw new Error(`当前演练状态为 ${drill.status},只有运行中的演练可以暂停`);
+    }
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const clock = JSON.parse(drill.clock_state) as ClockState;
+    const status = transition(DRILL_TRANSITIONS, "running", "paused");
+    updateDrillStatus(this.deps.db, drill.id, status);
+    updateDrillClock(this.deps.db, drill.id, JSON.stringify(pauseClock(clock, nowMs)));
+  }
+
+  /** 操作员恢复:paused → running,模拟时钟从冻结点续算 */
+  async resume(): Promise<void> {
+    const drill = this.current();
+    if (!drill) throw new Error("尚未发起演练,无可恢复的推演");
+    if (drill.status !== "paused") {
+      throw new Error(`当前演练状态为 ${drill.status},只有暂停中的演练可以恢复`);
+    }
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const clock = JSON.parse(drill.clock_state) as ClockState;
+    const status = transition(DRILL_TRANSITIONS, "paused", "running");
+    updateDrillStatus(this.deps.db, drill.id, status);
+    updateDrillClock(this.deps.db, drill.id, JSON.stringify(resumeClock(clock, nowMs)));
+  }
+
+  /** 操作员调速:运行中变速即时生效(当前段先结算进累计),已累计模拟时间不受影响 */
+  async setSpeed(speed: number): Promise<void> {
+    if (!(speed > 0)) throw new Error(`倍速必须大于 0,收到 ${speed}`);
+    const drill = this.current();
+    if (!drill) throw new Error("尚未发起演练,无可调速的推演");
+    if (drill.status === "completed" || drill.status === "aborted") {
+      throw new Error(`当前演练状态为 ${drill.status},已终止的演练不能调速`);
+    }
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const clock = JSON.parse(drill.clock_state) as ClockState;
+    updateDrillClock(this.deps.db, drill.id, JSON.stringify(setClockSpeed(clock, nowMs, speed)));
+  }
+
+  /** 操作员终止(二次确认由调用方负责):进入 aborted 终态,时钟停走,落库数据完整保留 */
+  async abort(): Promise<void> {
+    const { db } = this.deps;
+    const drill = this.current();
+    if (!drill) throw new Error("尚未发起演练,无可终止的推演");
+    if (drill.status === "completed" || drill.status === "aborted") {
+      throw new Error(`当前演练状态为 ${drill.status},已结束的演练不能再终止`);
+    }
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const clock = JSON.parse(drill.clock_state) as ClockState;
+    const frozen = clock.running ? pauseClock(clock, nowMs) : clock;
+    if (clock.running) {
+      updateDrillClock(db, drill.id, JSON.stringify(frozen));
+    }
+    const state = this.readRunState(drill.id);
+    const status = transition(DRILL_TRANSITIONS, drill.status as DrillStatus, "aborted");
+    updateDrillStatus(db, drill.id, status);
+    abortDrill(db, drill.id, new Date(nowMs).toISOString());
+    const node = insertTimelineNode(db, {
+      drill_id: drill.id,
+      event_id: state.eventId,
+      phase: state.phase,
+      node_type: "operator_action",
+      title: `操作员终止演练(终态 aborted,落库数据完整保留)`,
+      detail: JSON.stringify({ action: "abort", from: drill.status, to: "aborted" }),
+      actor: "operator",
+      sim_time: simTimeIso(frozen.simOrigin, simOffsetMs(frozen, nowMs)),
+      real_time: new Date(nowMs).toISOString(),
+    });
+    this.deps.onTimelineNode?.(node);
+  }
+
+  /**
+   * 重启恢复(spec 决策 12 / ADR 0001):进程启动时调用。
+   * 原 running 演练恢复为 paused,时钟冻结在最后落库动作时刻(不丢已推进模拟时间,停机真实时间不计入);
+   * 确认等待中(awaiting_confirmation)的演练时钟本已停走,保持原状直接接续(否则将无法恢复也无法新开)。
+   * 接续的演练绑定到本实例,可继续 pause/resume/abort/confirm。返回接续的演练数(0 或 1)。
+   */
+  recoverInterruptedDrills(): number {
+    const { db } = this.deps;
+    const nowMs = this.deps.now?.() ?? Date.now();
+    const interrupted = getRunningDrill(db);
+    if (!interrupted) {
+      // 无 running:若有确认等待中的演练,直接绑定接续(时钟已停,无需转态)
+      const awaitingId = getAwaitingConfirmationDrillId(db);
+      if (awaitingId) this.drillIdValue = awaitingId;
+      return awaitingId ? 1 : 0;
+    }
+
+    const clock = JSON.parse(interrupted.clock_state) as ClockState;
+    // 冻结点 = 最后落库动作的真实时刻(时间线最大 real_time),停机真实时间不计入
+    const lastActivityMs = getLastTimelineActivityMs(db, interrupted.id) ?? clock.lastRealAt ?? nowMs;
+    const frozen: ClockState = clock.running
+      ? {
+          ...clock,
+          simElapsedMs:
+            clock.simElapsedMs + Math.max(0, lastActivityMs - (clock.lastRealAt ?? lastActivityMs)) * clock.speed,
+          running: false,
+          lastRealAt: null,
+        }
+      : clock;
+    const status = transition(DRILL_TRANSITIONS, "running", "paused");
+    updateDrillStatus(db, interrupted.id, status);
+    updateDrillClock(db, interrupted.id, JSON.stringify(frozen));
+    const runState = this.readRunState(interrupted.id);
+    const node = insertTimelineNode(db, {
+      drill_id: interrupted.id,
+      event_id: runState.eventId,
+      phase: runState.phase,
+      node_type: "status_change",
+      title: `进程重启:演练自动恢复为暂停态(等待操作员手动恢复,模拟时钟从落库状态续算)`,
+      detail: JSON.stringify({ from: "running", to: "paused", reason: "process_restart" }),
+      actor: "drill_runner",
+      sim_time: simTimeIso(frozen.simOrigin, frozen.simElapsedMs),
+      real_time: new Date(nowMs).toISOString(),
+    });
+    this.deps.onTimelineNode?.(node);
+    this.drillIdValue = interrupted.id;
+    return 1;
   }
 
   private writeNotificationState(drillId: string, notification: NotificationSnapshot): void {

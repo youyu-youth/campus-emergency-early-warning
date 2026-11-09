@@ -134,6 +134,7 @@ async function main(): Promise<void> {
   console.log(
     `▶ 发起演练:${scenario.name} · 种子 ${args.seed} · 倍速 ${args.speed}x · 模型 ${args.model === "fake" ? "假模型(演示剧本)" : "DeepSeek"} · ${args.auto ? "全自动模式(跳过确认)" : "人工确认模式"}`,
   );
+  console.log("ℹ 推演进行中可用命令:p 暂停/继续 · 数字 设定倍速(如 120)· x 终止(需二次确认)");
 
   const db = getDb();
   let simOriginMs = 0;
@@ -144,39 +145,170 @@ async function main(): Promise<void> {
     onTimelineNode: (node) => printNode(node, simOriginMs),
   });
 
-  const { drillId } = await runner.start({
-    scenarioKey,
-    seed: args.seed,
-    speed: args.speed,
-    autoConfirm: args.auto,
-    params: {
-      ...(args.location ? { location: args.location } : {}),
-      ...(args.intensity ? { intensity: args.intensity } : {}),
-    },
-  });
+  // 重启恢复在发起之前:库中如留有上次进程中断的 running 演练,自动恢复为暂停态并接续操控
+  let drillId: string;
+  if (runner.recoverInterruptedDrills() > 0) {
+    drillId = runner.drillId!;
+    console.log(`⟳ 检测到上次进程中断的演练「${getDrill(db, drillId)!.name}」,已自动恢复为暂停态(输入 p 继续,或 x 终止后重新发起)`);
+  } else {
+    ({ drillId } = await runner.start({
+      scenarioKey,
+      seed: args.seed,
+      speed: args.speed,
+      autoConfirm: args.auto,
+      params: {
+        ...(args.location ? { location: args.location } : {}),
+        ...(args.intensity ? { intensity: args.intensity } : {}),
+      },
+    }));
+  }
   simOriginMs = JSON.parse(getDrill(db, drillId)!.clock_state).simOrigin as number;
 
-  // tick 循环:关键节点暂停等待操作员确认(定级/任务方案/加派/通知),确认后继续;复盘收尾达终态后 CLI 打印摘要
+  // tick 循环:关键节点暂停等待操作员确认(定级/任务方案/加派/通知);操作员可用命令随时暂停/恢复/调速/终止
   const reader = new LineReader();
+  const controls = new ControlInteractions(runner, reader);
+  controls.setEnabled(true);
   try {
-    let point = await runUntilDecisionPoint(runner);
-    while (point === "awaiting_confirmation") {
-      const pending = readPendingConfirmation(db, drillId);
-      if (pending === "grading") {
-        await runner.confirmGrading(await promptGradingConfirmation(reader, db, drillId));
-      } else if (pending === "dispatch") {
-        await runner.confirmDispatch(await promptDispatchConfirmation(reader, db, drillId));
+    let status = runner.status;
+    for (;;) {
+      if (status === "running") {
+        status = await runUntilDecisionPoint(runner);
+      } else if (status === "awaiting_confirmation") {
+        controls.setEnabled(false);
+        await handleConfirmation(reader, runner, db, drillId);
+        controls.setEnabled(true);
+        status = runner.status;
+      } else if (status === "paused") {
+        console.log("⏸ 已暂停(命令:p 继续 · 数字 设定倍速 · x 终止)");
+        status = await controls.waitForStatusChange();
       } else {
-        await promptNotificationConfirmation(reader, db, drillId);
-        await runner.confirmNotification();
+        break; // completed / aborted / null(输入结束)终态
       }
-      point = await runUntilDecisionPoint(runner);
     }
-    await promptNotificationRetryIfNeeded(reader, runner, db, drillId);
+    if (runner.status === "completed") {
+      await promptNotificationRetryIfNeeded(reader, runner, db, drillId);
+    }
   } finally {
+    controls.setEnabled(false);
     reader.close();
   }
   printSummary(db, drillId);
+}
+
+/** 确认点交互分发(定级/方案/通知三缝,复用决策坞提示) */
+async function handleConfirmation(
+  reader: LineReader,
+  runner: DrillRunner,
+  db: ReturnType<typeof getDb>,
+  drillId: string,
+): Promise<void> {
+  const pending = readPendingConfirmation(db, drillId);
+  if (pending === "grading") {
+    await runner.confirmGrading(await promptGradingConfirmation(reader, db, drillId));
+  } else if (pending === "dispatch") {
+    await runner.confirmDispatch(await promptDispatchConfirmation(reader, db, drillId));
+  } else {
+    await promptNotificationConfirmation(reader, db, drillId);
+    await runner.confirmNotification();
+  }
+}
+
+/** 推演控制命令(p 暂停/恢复 · 数字调速 · x 终止需二次确认);仅经公共运行器接口操作 */
+class ControlInteractions {
+  private enabled = false;
+  private abortArmed = false;
+  private readonly waiters: Array<(status: DrillStatus | null) => void> = [];
+
+  constructor(
+    private readonly runner: DrillRunner,
+    reader: LineReader,
+  ) {
+    reader.onLine((line) => {
+      if (!this.enabled) return false;
+      return this.handle(line.trim());
+    });
+    reader.onClose(() => {
+      // 输入结束:停用命令并唤醒挂起的等待(以 null 通知主循环退出)
+      this.setEnabled(false);
+      for (const resolve of this.waiters.splice(0)) resolve(null);
+    });
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) this.abortArmed = false;
+  }
+
+  /** 暂停/恢复等待期间挂起,直到命令改变状态;返回当前演练状态 */
+  waitForStatusChange(): Promise<DrillStatus | null> {
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  /** 返回 true 表示该行已被作为命令消费 */
+  private handle(line: string): boolean {
+    if (line === "") return false; // 空行不当作命令(留给确认提示)
+    if (line !== "x") this.abortArmed = false; // 任何其他输入取消终止确认
+    if (line === "p") {
+      void this.togglePause();
+      return true;
+    }
+    if (line === "x") {
+      this.confirmAbort();
+      return true;
+    }
+    const speed = Number(line);
+    if (Number.isFinite(speed) && speed > 0) {
+      void this.runner.setSpeed(speed).then(
+        () => console.log(`  ⚡ 倍速已调整为 ${speed}x`),
+        (error) => console.log(`  ✗ 调速失败:${errorMessage(error)}`),
+      );
+      return true;
+    }
+    console.log("  无法识别的命令:p = 暂停/继续 · 数字 = 倍速(如 120)· x = 终止");
+    return true;
+  }
+
+  private async togglePause(): Promise<void> {
+    try {
+      if (this.runner.status === "running") {
+        await this.runner.pause();
+        console.log("  ⏸ 已暂停(输入 p 继续)");
+      } else if (this.runner.status === "paused") {
+        await this.runner.resume();
+        console.log("  ▶ 已恢复,推演继续");
+      } else {
+        console.log(`  当前状态 ${this.runner.status ?? "?"} 不可暂停/恢复`);
+        return;
+      }
+      this.resolveWaiters();
+    } catch (error) {
+      console.log(`  ✗ 操作失败:${errorMessage(error)}`);
+    }
+  }
+
+  private confirmAbort(): void {
+    if (!this.abortArmed) {
+      this.abortArmed = true;
+      console.log("  ⚠ 终止将放弃本次推演(落库数据完整保留)。再输入一次 x 确认终止,其他输入取消:");
+      return;
+    }
+    this.abortArmed = false;
+    void this.runner.abort().then(
+      () => {
+        console.log("  ■ 演练已终止(aborted)");
+        this.resolveWaiters();
+      },
+      (error) => console.log(`  ✗ 终止失败:${errorMessage(error)}`),
+    );
+  }
+
+  private resolveWaiters(): void {
+    for (const resolve of this.waiters.splice(0)) resolve(this.runner.status);
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -188,17 +320,34 @@ class LineReader {
   private readonly waiters: Array<(line: string) => void> = [];
   private readonly buffered: string[] = [];
   private closed = false;
+  private lineHandler: ((line: string) => boolean) | null = null;
+  private closeHandler: (() => void) | null = null;
 
   constructor() {
     this.rl.on("line", (line) => {
       const resolve = this.waiters.shift();
-      if (resolve) resolve(line);
-      else this.buffered.push(line);
+      if (resolve) {
+        resolve(line);
+        return;
+      }
+      if (this.lineHandler?.(line)) return; // 命令处理器消费(推演进行中的控制命令)
+      this.buffered.push(line);
     });
     this.rl.on("close", () => {
       this.closed = true;
       for (const resolve of this.waiters.splice(0)) resolve("");
+      this.closeHandler?.();
     });
+  }
+
+  /** 注册命令行处理器(确认提示等待期间的行仍归提示所有);返回 false 表示未消费,进缓冲 */
+  onLine(handler: (line: string) => boolean): void {
+    this.lineHandler = handler;
+  }
+
+  /** 输入结束(EOF)回调:唤醒挂起的控制等待 */
+  onClose(handler: () => void): void {
+    this.closeHandler = handler;
   }
 
   question(prompt: string): Promise<string> {
@@ -234,7 +383,7 @@ function readPendingConfirmation(
   return state.dispatch?.status === "awaiting_confirmation" ? "dispatch" : "notification";
 }
 
-/** 决策坞(CLI 版):展示双受众通知全文,确认发布 */
+/** 决策坞(CLI 版):展示双受众通知全文,确认发布(空行确认,其他输入提示) */
 async function promptNotificationConfirmation(
   reader: LineReader,
   db: ReturnType<typeof getDb>,
@@ -249,7 +398,11 @@ async function promptNotificationConfirmation(
       if (line.trim()) console.log(`     ${line.trim()}`);
     }
   }
-  await reader.question("请操作:直接回车 = 确认发布(模拟分发):");
+  for (;;) {
+    const answer = (await reader.question("请操作:直接回车 = 确认发布(模拟分发):")).trim();
+    if (answer === "") return;
+    console.log("无效输入:发布确认只接受直接回车");
+  }
 }
 
 /** 段末如有失败通知:提供重试入口(模拟分发失败只影响通知自身) */
