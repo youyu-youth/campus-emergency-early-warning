@@ -24,7 +24,7 @@ import type { DrillRow, NotificationRow, ReportRow, SignalRow, TaskRow, Timeline
 import { DrillRunner, type DrillRunState, type StartDrillInput } from "../runner/drill-runner";
 import { formatSimClock, simOffsetMs, type ClockState } from "../simulation/clock";
 import type { ScenarioKey } from "../simulation/scenarios";
-import type { DrillPhase, DrillStatus, EventSeverity } from "../simulation/state-machines";
+import { PHASE_ORDER, type DrillPhase, type DrillStatus, type EventSeverity } from "../simulation/state-machines";
 import type { TaskPlanItem } from "../simulation/task-rules";
 import type {
   AgentStatusDTO,
@@ -65,6 +65,33 @@ function readRunState(db: Db, drillId: string): DrillRunState {
 function clockLabel(drill: DrillRow): string {
   const clock = JSON.parse(drill.clock_state) as ClockState;
   return formatSimClock(simOffsetMs(clock, Date.now()));
+}
+
+/** 从 params 列读人工确认开关(损坏容忍:视作默认人工确认) */
+function parseParamsAutoConfirm(drill: DrillRow): boolean {
+  try {
+    const params = JSON.parse(drill.params) as { autoConfirm?: unknown };
+    return params.autoConfirm === true;
+  } catch {
+    return false;
+  }
+}
+
+/** 重置语义(用户拍板):当前演练留痕终止,新开一场同配置同种子演练 */
+export function buildRestartInput(drill: DrillRow): StartDrillInput {
+  let speed = 1;
+  try {
+    const clock = JSON.parse(drill.clock_state) as { speed?: unknown };
+    if (typeof clock.speed === "number" && clock.speed > 0) speed = clock.speed;
+  } catch {
+    // clock_state 损坏时按默认倍速重开
+  }
+  return {
+    scenarioKey: drill.scenario_key as ScenarioKey,
+    seed: drill.seed,
+    speed,
+    autoConfirm: parseParamsAutoConfirm(drill) || undefined,
+  };
 }
 
 /** 壳层状态条消费的摘要(全局唯一活跃演练;无则 null) */
@@ -207,7 +234,6 @@ function deriveAgentStatuses(
   tasks: TaskRow[],
   finished = false,
 ): AgentStatusDTO[] {
-  const phaseOrder: DrillPhase[] = ["perception", "grading", "handling", "notification", "review"];
   const actorByKey: Record<string, string> = {
     perception: "monitor_agent",
     command: "command_agent",
@@ -221,7 +247,7 @@ function deriveAgentStatuses(
   for (const node of timeline) {
     if (node.actor) latestByActor.set(node.actor, node);
   }
-  const currentOrdinal = phaseOrder.indexOf(phase);
+  const currentOrdinal = PHASE_ORDER.indexOf(phase);
 
   return AGENT_DEFS.map((def) => {
     const latest = latestByActor.get(actorByKey[def.key]) ?? null;
@@ -234,7 +260,7 @@ function deriveAgentStatuses(
         ? tasks.some((t) => t.role === def.key.replace("handling_", "") && t.status === "executing")
         : false;
       status = executing ? "executing" : "working";
-    } else if (def.phases.some((p) => phaseOrder.indexOf(p) < currentOrdinal)) {
+    } else if (def.phases.some((p) => PHASE_ORDER.indexOf(p) < currentOrdinal)) {
       status = "done";
     }
     return { key: def.key, label: def.label, status, latestAction: latest?.title ?? null };
@@ -317,6 +343,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
       score: drill.score,
       simClockLabel: clockLabel(drill),
       speed: JSON.parse(drill.clock_state).speed,
+      autoConfirm: parseParamsAutoConfirm(drill),
       startedAt: drill.started_at,
       endedAt: drill.ended_at,
     },
@@ -414,6 +441,9 @@ export interface DrillServiceApi {
   pause(): Promise<void>;
   resume(): Promise<void>;
   abort(): Promise<void>;
+  setSpeed(speed: number): Promise<void>;
+  /** 重置:当前演练终止留痕,同配置同种子新开一场(running/paused/awaiting 均可) */
+  restart(): Promise<{ drillId: string }>;
   confirmGrading(severity?: EventSeverity): Promise<{ severity: EventSeverity }>;
   confirmDispatch(tasks?: TaskPlanItem[]): Promise<{ dispatchedCount: number }>;
   confirmNotification(): Promise<{ published: number; failed: number }>;
@@ -462,6 +492,19 @@ export function drillServiceApi(): DrillServiceApi {
     async abort() {
       await service.runner.abort();
       stopTicking(service);
+    },
+    async setSpeed(speed: number) {
+      // 调速不改变 running 状态,tick 循环无需启停
+      await service.runner.setSpeed(speed);
+    },
+    async restart() {
+      const active = getActiveDrills(db)[0];
+      if (!active) throw new Error("没有可重置的演练");
+      const input = buildRestartInput(active);
+      await service.runner.abort();
+      stopTicking(service);
+      // abort 已留痕,start 失败时旧演练保持终止,操作员可回到发起页重新发起
+      return wrap.start(input);
     },
     async confirmGrading(severity?: EventSeverity) {
       const result = await service.runner.confirmGrading(severity ? { severity } : {});

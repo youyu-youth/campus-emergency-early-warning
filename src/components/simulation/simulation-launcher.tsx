@@ -1,15 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FlaskConical, Loader2, Play } from "lucide-react";
 
 import { DrillTag } from "@/components/status/drill-tag";
 import type { DrillSummaryDTO } from "@/lib/drill-types";
 import { cn } from "@/lib/utils";
 import type { ScenarioKey } from "@/simulation/scenarios";
+import { SimulationConsole } from "./simulation-console";
 
-interface ScenarioCard {
+export interface ScenarioCard {
   key: ScenarioKey;
   name: string;
   description: string;
@@ -23,7 +24,7 @@ const INTENSITY_LABELS: Record<ScenarioCard["intensity"], string> = {
   high: "高强度",
 };
 
-/** 场景配置与发起(docs/design.md §4.3 空闲态):横向场景选择 + 参数表单,发起后直达工作区 */
+/** /simulation 两态切换(docs/design.md §4.3):空闲=场景配置与发起;有活跃演练=整页运行态控制台 */
 export function SimulationLauncher({ scenarios }: { scenarios: ScenarioCard[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<ScenarioKey>(scenarios[0]?.key ?? "fire_alarm");
@@ -34,22 +35,25 @@ export function SimulationLauncher({ scenarios }: { scenarios: ScenarioCard[] })
   const [error, setError] = useState<string | null>(null);
   const [activeDrill, setActiveDrill] = useState<DrillSummaryDTO | null>(null);
 
+  const refreshActive = useCallback(async () => {
+    try {
+      const res = await fetch("/api/drills", { cache: "no-store" });
+      const data = (await res.json()) as { drill: DrillSummaryDTO | null };
+      setActiveDrill(data.drill);
+    } catch {
+      /* 忽略,提交时兜底 */
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    const check = async () => {
-      try {
-        const res = await fetch("/api/drills", { cache: "no-store" });
-        const data = (await res.json()) as { drill: DrillSummaryDTO | null };
-        if (!cancelled) setActiveDrill(data.drill);
-      } catch {
-        /* 忽略,提交时兜底 */
-      }
-    };
-    void check();
+    void (async () => {
+      if (!cancelled) await refreshActive();
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshActive]);
 
   const launch = async () => {
     setSubmitting(true);
@@ -78,23 +82,13 @@ export function SimulationLauncher({ scenarios }: { scenarios: ScenarioCard[] })
     }
   };
 
+  // 运行态:整页切换为控制台(场景配置与发起入口退场,终止/完成后经 onExited 回到本表单)
+  if (activeDrill) {
+    return <SimulationConsole drillId={activeDrill.id} scenarios={scenarios} onExited={() => void refreshActive()} />;
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-y-auto px-6 py-6">
-      {activeDrill && (
-        <div className="mb-5 flex items-center gap-3 rounded-md border border-border bg-card px-4 py-3 text-[13px]">
-          <span className="size-2 rounded-full bg-primary" aria-hidden />
-          <span>
-            已有进行中的演练:<b className="font-semibold">{activeDrill.name}</b>(同一时间至多一场)
-          </span>
-          <a
-            href="/command"
-            className="ml-auto rounded-sm bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:brightness-110"
-          >
-            进入工作区
-          </a>
-        </div>
-      )}
-
       <div className="flex gap-5">
         {scenarios.map((scenario) => {
           const active = selected === scenario.key;
@@ -174,7 +168,7 @@ export function SimulationLauncher({ scenarios }: { scenarios: ScenarioCard[] })
         <button
           type="button"
           onClick={launch}
-          disabled={submitting || !!activeDrill}
+          disabled={submitting}
           className="flex h-10 items-center gap-2 rounded-sm bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" aria-hidden />}

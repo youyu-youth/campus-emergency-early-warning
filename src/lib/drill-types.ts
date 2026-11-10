@@ -131,6 +131,8 @@ export interface DrillDetailDTO {
     score: number | null;
     simClockLabel: string;
     speed: number;
+    /** 全自动模式(true=跳过人工确认点;来自 params 列,运行态控制台展示确认模式) */
+    autoConfirm: boolean;
     startedAt: string | null;
     endedAt: string | null;
   };

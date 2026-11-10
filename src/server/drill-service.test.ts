@@ -5,10 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { openDatabase } from "../db/client";
 import { getActiveDrills, getDrill, getGraphRunByDrillId } from "../db/queries";
+import type { DrillRow } from "../db/types";
 import { DEMO_SCRIPTS } from "../../scripts/demo-scripts";
 import { ScriptedModel } from "../agents/model";
 import { DrillRunner } from "../runner/drill-runner";
-import { buildDrillDetail, buildDrillHistory, buildDrillSummary } from "./drill-service";
+import { buildDrillDetail, buildDrillHistory, buildDrillSummary, buildRestartInput } from "./drill-service";
 
 async function driveUntilNotRunning(runner: DrillRunner, realNow: { t: number }, maxSteps = 400): Promise<void> {
   for (let i = 0; i < maxSteps && runner.status === "running"; i++) {
@@ -184,6 +185,78 @@ describe("演练服务 · 查询 DTO 组装", () => {
     expect(revived.drillId).toBe(drillId);
     await revived.resume();
     expect(getDrill(db, drillId)!.status).toBe("running");
+    db.close();
+  });
+
+  it("重置输入还原:从演练行重建同配置 StartDrillInput(损坏容忍)", () => {
+    const row = {
+      id: "d1",
+      scenario_key: "fire_alarm",
+      name: "消防警报演练 · 种子 42",
+      seed: 42,
+      params: JSON.stringify({ location: "图书馆", intensity: "high", autoConfirm: true }),
+      status: "running",
+      clock_state: JSON.stringify({ speed: 4 }),
+      score: null,
+      started_at: "2026-11-10T02:00:00.000Z",
+      ended_at: null,
+      created_at: "2026-11-10T02:00:00.000Z",
+      updated_at: "2026-11-10T02:00:00.000Z",
+    } satisfies DrillRow;
+    expect(buildRestartInput(row)).toEqual({ scenarioKey: "fire_alarm", seed: 42, speed: 4, autoConfirm: true });
+    // clock_state/params 损坏:按默认倍速 1、人工确认重开
+    expect(buildRestartInput({ ...row, clock_state: "broken", params: "broken" })).toEqual({
+      scenarioKey: "fire_alarm",
+      seed: 42,
+      speed: 1,
+      autoConfirm: undefined,
+    });
+  });
+
+  it("重置与调速:调速进入摘要;重置=当前演练留痕终止+同配置同种子新开", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel(DEMO_SCRIPTS.fire_alarm);
+    const realNow = { t: Date.parse("2026-11-10T02:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId: firstId } = await runner.start({
+      scenarioKey: "fire_alarm",
+      seed: 42,
+      speed: 60,
+      autoConfirm: true,
+    });
+
+    // 全自动模式确认点不暂停,少量推进保持运行中
+    for (let i = 0; i < 3; i++) {
+      realNow.t += 1_000;
+      await runner.tick();
+    }
+    expect(runner.status).toBe("running");
+
+    // 调速 → clock_state 落库 → 摘要 DTO 通路(状态条/控制台显示当前倍速)
+    await runner.setSpeed(4);
+    expect(buildDrillSummary(db, getDrill(db, firstId)!).speed).toBe(4);
+
+    // 重置第一步:从活跃演练行重建输入(种子/倍速/确认模式全部保留)
+    const input = buildRestartInput(getActiveDrills(db)[0]);
+    expect(input).toEqual({ scenarioKey: "fire_alarm", seed: 42, speed: 4, autoConfirm: true });
+
+    // 重置第二步:当前演练留痕终止(记录保留,不评分)
+    await runner.abort();
+    const oldRow = getDrill(db, firstId)!;
+    expect(oldRow.status).toBe("aborted");
+    expect(oldRow.ended_at).not.toBeNull();
+    expect(oldRow.score).toBeNull();
+
+    // 重置第三步:同配置新开一场,单事件焦点切换到新演练
+    const { drillId: secondId } = await runner.start(input);
+    expect(secondId).not.toBe(firstId);
+    expect(getActiveDrills(db).map((d) => d.id)).toEqual([secondId]);
+    const newDetail = buildDrillDetail(db, secondId)!;
+    expect(newDetail.drill.seed).toBe(42);
+    expect(newDetail.drill.speed).toBe(4);
+    expect(newDetail.drill.autoConfirm).toBe(true);
+    // 旧演练详情仍是可查看的终止记录
+    expect(buildDrillDetail(db, firstId)!.drill.status).toBe("aborted");
     db.close();
   });
 });

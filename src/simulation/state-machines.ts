@@ -39,6 +39,15 @@ export const PHASE_LABELS: Record<DrillPhase, string> = {
   review: "复盘",
 };
 
+/** 推演阶段顺序(进度条/编队状态推导共用) */
+export const PHASE_ORDER: readonly DrillPhase[] = [
+  "perception",
+  "grading",
+  "handling",
+  "notification",
+  "review",
+];
+
 export type TaskStatus =
   | "pending_confirmation" // 待确认
   | "executing" // 执行中
