@@ -35,6 +35,7 @@ import type {
   PendingConfirmationDTO,
   ReportDTO,
   SignalDTO,
+  SignalPerceptionDTO,
   TaskDTO,
   TimelineNodeDTO,
 } from "../lib/drill-types";
@@ -169,15 +170,63 @@ function toNotificationDTO(row: NotificationRow): NotificationDTO {
 }
 
 function toSignalDTO(row: SignalRow): SignalDTO {
+  let payload: SignalDTO["payload"] = {};
+  try {
+    payload = JSON.parse(row.payload) as SignalDTO["payload"];
+  } catch {
+    payload = {};
+  }
   return {
     id: row.id,
     sourceKind: row.source_kind,
+    sourceRef: row.source_ref,
     location: row.location,
     signalType: row.signal_type,
     confidence: row.confidence,
     status: row.status,
     simTime: row.sim_time,
+    payload,
   };
+}
+
+/**
+ * 把 timeline 感知节点的解读结果挂到对应信号(监测中心消费):
+ * - signal 节点 detail = { input: { signalId }, output },output 即感知提取
+ * - anomaly 节点 detail = { signalId },标记该信号为降级解读
+ */
+function attachSignalPerceptions(signals: SignalDTO[], timelineRows: TimelineNodeRow[], eventSignalId: string | null): void {
+  const byId = new Map(signals.map((s) => [s.id, s]));
+  for (const node of timelineRows) {
+    let detail: Record<string, unknown> = {};
+    try {
+      detail = JSON.parse(node.detail) as Record<string, unknown>;
+    } catch {
+      detail = {};
+    }
+    if (node.node_type === "signal" && node.phase === "perception") {
+      const signalId = (detail.input as { signalId?: string } | undefined)?.signalId;
+      const output = detail.output as SignalPerceptionDTO | undefined;
+      const signal = signalId ? byId.get(signalId) : undefined;
+      if (signal && output) {
+        signal.perception = {
+          title: String(output.title ?? ""),
+          eventType: String(output.eventType ?? ""),
+          location: String(output.location ?? ""),
+          occurredTime: String(output.occurredTime ?? ""),
+          evidence: Array.isArray(output.evidence) ? output.evidence.map(String) : [],
+          reasoning: String(output.reasoning ?? ""),
+          degraded: false,
+          createdEvent: signalId === eventSignalId,
+        };
+      }
+    } else if (node.node_type === "anomaly") {
+      const signalId = typeof detail.signalId === "string" ? detail.signalId : null;
+      const signal = signalId ? byId.get(signalId) : undefined;
+      if (signal?.perception) {
+        signal.perception.degraded = true;
+      }
+    }
+  }
 }
 
 /** 复盘报告行 → DTO(JSON 列解析失败容忍:置空数组/零指标,报告头仍可呈现) */
@@ -320,6 +369,8 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
   const taskRows = listTasksByDrill(db, drill.id);
   const finished = drill.status === "completed" || drill.status === "aborted";
   const reportRow = getReportByDrillId(db, drill.id);
+  const signals = listSignalsByDrill(db, drill.id).map(toSignalDTO);
+  attachSignalPerceptions(signals, timelineRows, eventRow?.signal_id ?? null);
 
   const event: DrillDetailDTO["event"] = eventRow
     ? {
@@ -353,7 +404,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
     timeline: timelineRows.map(toTimelineDTO),
     tasks: taskRows.map(toTaskDTO),
     notifications: listNotificationsByDrill(db, drill.id).map(toNotificationDTO),
-    signals: listSignalsByDrill(db, drill.id).map(toSignalDTO),
+    signals,
     report: reportRow ? toReportDTO(reportRow) : null,
     agents: deriveAgentStatuses(state.phase, timelineRows, taskRows, finished),
   };

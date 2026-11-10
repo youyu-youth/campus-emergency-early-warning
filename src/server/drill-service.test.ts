@@ -7,7 +7,7 @@ import { openDatabase } from "../db/client";
 import { getActiveDrills, getDrill, getGraphRunByDrillId } from "../db/queries";
 import type { DrillRow } from "../db/types";
 import { DEMO_SCRIPTS } from "../../scripts/demo-scripts";
-import { ScriptedModel } from "../agents/model";
+import { ScriptedModel, type ScriptedResponse } from "../agents/model";
 import { DrillRunner } from "../runner/drill-runner";
 import { buildDrillDetail, buildDrillHistory, buildDrillSummary, buildRestartInput } from "./drill-service";
 
@@ -143,6 +143,48 @@ describe("演练服务 · 查询 DTO 组装", () => {
     expect(detail.agents.find((a) => a.key === "review")?.status).toBe("standby");
     expect(detail.agents.find((a) => a.key === "perception")?.status).toBe("done");
     expect(detail.agents.find((a) => a.key === "command")?.status).toBe("working");
+    db.close();
+  });
+
+  it("监测中心数据:信号透出原始读数与感知解读,降级解读被标记", async () => {
+    const db = openDatabase(":memory:");
+    // 首信号感知强制坏输出(重试仍坏)→ 规则降级解读;后续信号走正常剧本
+    const degradedScripts: Record<string, ScriptedResponse[]> = {
+      ...DEMO_SCRIPTS.fire_alarm,
+      perception: [{ badJson: true }, { badJson: true }, ...DEMO_SCRIPTS.fire_alarm.perception.slice(2)],
+    };
+    const model = new ScriptedModel(degradedScripts);
+    const realNow = { t: Date.parse("2026-11-08T10:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60 });
+    await driveUntilNotRunning(runner, realNow); // 感知段完成,停在定级确认
+
+    const detail = buildDrillDetail(db, drillId)!;
+    expect(detail.signals.length).toBeGreaterThan(0);
+
+    // 首信号(按模拟时间最早):原始读数与设备编号透出(监测页「原始数据」段)
+    const first = detail.signals[0];
+    expect(first.sourceRef).toMatch(/^[A-Z0-9-]+$/);
+    expect(first.payload).toBeTypeOf("object");
+    expect(first.payload.simulated).toBe(true);
+    expect(first.status).toBe("reported");
+
+    // 首信号创建事件:解读完整、降级被标记、事件标题与解读一致
+    expect(first.perception).toBeDefined();
+    expect(first.perception!.createdEvent).toBe(true);
+    expect(first.perception!.degraded).toBe(true);
+    expect(first.perception!.evidence.length).toBeGreaterThan(0);
+    expect(first.perception!.reasoning).toBeTypeOf("string");
+    expect(detail.event?.title).toBe(first.perception!.title);
+
+    // 后续信号:正常剧本解读(未降级),作为补充证据并入而非建事件
+    const rest = detail.signals.slice(1);
+    expect(rest.length).toBeGreaterThan(0);
+    for (const signal of rest) {
+      expect(signal.perception).toBeDefined();
+      expect(signal.perception!.createdEvent).toBe(false);
+    }
+    expect(rest.some((s) => s.perception!.degraded === false)).toBe(true);
     db.close();
   });
 

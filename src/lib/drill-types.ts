@@ -23,14 +23,34 @@ export interface AgentStatusDTO {
   latestAction: string | null;
 }
 
+/** 感知解读(监测中心消费;来自 timeline 感知 signal 节点,模型失败时为规则降级解读) */
+export interface SignalPerceptionDTO {
+  title: string;
+  eventType: string;
+  location: string;
+  occurredTime: string;
+  evidence: string[];
+  reasoning: string;
+  /** true=模型超时/输出无效,已按规则默认解读上报 */
+  degraded: boolean;
+  /** 该信号是否为创建事件的首信号 */
+  createdEvent: boolean;
+}
+
 export interface SignalDTO {
   id: string;
   sourceKind: "sensor" | "camera" | string;
+  /** 模拟设备编号(如 LIB-3F-SMOKE-01),证明信号来源为模拟设备 */
+  sourceRef: string;
   location: string;
   signalType: string;
   confidence: number;
   status: string;
   simTime: string;
+  /** 原始读数(键值随信号类型变化,显式携带 simulated: true) */
+  payload: Record<string, unknown>;
+  /** 感知 Agent 解读结果(信号被解读后才有) */
+  perception?: SignalPerceptionDTO;
 }
 
 /** 演练历史条目(指挥台历史表格);severity 来自关联事件,score 终止时为 null */
