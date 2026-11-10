@@ -4,11 +4,11 @@ import { z } from "zod";
 import { drillServiceApi } from "@/server/drill-service";
 
 const ControlBodySchema = z.object({
-  action: z.enum(["pause", "resume", "abort", "set_speed", "restart"]),
+  action: z.enum(["pause", "resume", "abort", "set_speed", "restart", "retry_notification"]),
   speed: z.number().positive().max(10).optional(),
 });
 
-/** POST /api/drills/[id]/control:推演控制(暂停/恢复/终止/调速/重置;终止与重置的二次确认由前端负责) */
+/** POST /api/drills/[id]/control:推演控制(暂停/恢复/终止/调速/重置/通知重试;终止与重置的二次确认由前端负责) */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   let body: unknown;
@@ -20,7 +20,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const parsed = ControlBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "action 只能是 pause / resume / abort / set_speed / restart" },
+      { error: "action 只能是 pause / resume / abort / set_speed / restart / retry_notification" },
       { status: 400 },
     );
   }
@@ -31,12 +31,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const api = drillServiceApi();
   // 归属校验用详情(终态不可控;paused/awaiting 可被恢复、调速、重置、终止)
+  // 通知重试例外:刚完成的演练也可重试(⚑ 节点追加发布结果是设计内可变例外;aborted 不可)
   const detail = api.detail(id);
   const controllable = ["running", "paused", "awaiting_confirmation"];
-  if (!detail || !controllable.includes(detail.drill.status)) {
+  const allowed =
+    controllable.includes(detail?.drill.status ?? "") ||
+    (action === "retry_notification" && detail?.drill.status === "completed");
+  if (!detail || !allowed) {
     return NextResponse.json({ error: `演练 ${id} 不在可控制状态(可能已结束或不存在)` }, { status: 409 });
   }
   try {
+    if (action === "retry_notification") {
+      const result = await api.retryNotification(id);
+      return NextResponse.json({ result, drill: api.activeSummary() });
+    }
     if (action === "set_speed") {
       await api.setSpeed(speed as number);
       return NextResponse.json({ drill: api.activeSummary(), status: detail.drill.status });

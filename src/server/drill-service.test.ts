@@ -188,6 +188,56 @@ describe("演练服务 · 查询 DTO 组装", () => {
     db.close();
   });
 
+  it("通知中心数据:发布时刻/来源/逐次分发记录透出,完成态重试后 DTO 反映追加", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel(DEMO_SCRIPTS.medical_emergency);
+    const realNow = { t: Date.parse("2026-11-08T02:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60 });
+
+    // 走完三个确认点(seed 7:师生发布成功、家长通道首试失败)
+    await driveUntilNotRunning(runner, realNow);
+    await runner.confirmGrading({});
+    await driveUntilNotRunning(runner, realNow);
+    await runner.confirmDispatch({});
+    await driveUntilNotRunning(runner, realNow);
+    await runner.confirmNotification();
+    await driveUntilNotRunning(runner, realNow);
+    expect(runner.status).toBe("completed");
+
+    let detail = buildDrillDetail(db, drillId)!;
+    expect(detail.notifications).toHaveLength(2);
+    const staff = detail.notifications.find((n) => n.audience === "staff_students")!;
+    const parents = detail.notifications.find((n) => n.audience === "parents")!;
+    // 已发布:发布时刻(模拟 ISO)+ 送达统计含通道与尝试次 + ⚑ 节点的来源与生成时刻
+    expect(staff.status).toBe("published_sim");
+    expect(staff.publishedSimTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(staff.delivery?.channelOk).toBe(true);
+    expect(staff.delivery?.attempt).toBe(1);
+    expect(staff.source).toBe("model");
+    expect(staff.draftSimTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(staff.publishes).toHaveLength(1);
+    expect(staff.publishes[0].attempt).toBe(1);
+    expect(staff.publishes[0].stats.total).toBeGreaterThan(0);
+    // 失败:发布时刻为 null,尝试记录标 failed
+    expect(parents.status).toBe("failed");
+    expect(parents.publishedSimTime).toBeNull();
+    expect(parents.publishes).toHaveLength(1);
+    expect(parents.publishes[0].status).toBe("failed");
+
+    // 完成态重试(runner 仍绑定)→ DTO 透出第 2 次尝试与翻转后的状态
+    const retry = await runner.retryNotification();
+    expect(retry).toEqual({ retried: 1, published: 2, failed: 0 });
+    detail = buildDrillDetail(db, drillId)!;
+    const retriedParents = detail.notifications.find((n) => n.audience === "parents")!;
+    expect(retriedParents.status).toBe("published_sim");
+    expect(retriedParents.publishedSimTime).not.toBeNull();
+    expect(retriedParents.publishes).toHaveLength(2);
+    expect(retriedParents.publishes[1].attempt).toBe(2);
+    expect(retriedParents.publishes[1].status).toBe("published_sim");
+    db.close();
+  });
+
   it("指挥台数据:详情含信号,历史列表可查,暂停仍是活跃演练且重启可接续", async () => {
     const db = openDatabase(":memory:");
     const model = new ScriptedModel(DEMO_SCRIPTS.fire_alarm);

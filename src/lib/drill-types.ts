@@ -121,13 +121,29 @@ export interface TaskDTO {
   result: { durationMs?: number; note?: string } | null;
 }
 
+/** 单次发布尝试记录(来自 ⚑ 通知节点 detail.publishes;GLOSSARY:发布/重试追加是节点唯一可变例外) */
+export interface NotificationPublishDTO {
+  attempt: number;
+  status: string;
+  stats: { total?: number; delivered?: number; failed?: number };
+  publishedSimTime: string | null;
+}
+
 export interface NotificationDTO {
   id: string;
   audience: string;
   title: string;
   content: string;
   status: string;
-  delivery: { total?: number; delivered?: number; failed?: number } | null;
+  delivery: { total?: number; delivered?: number; failed?: number; channelOk?: boolean; attempt?: number } | null;
+  /** 发布(模拟)时刻;未发布为 null */
+  publishedSimTime: string | null;
+  /** 草稿生成时刻(模拟,来自 ⚑ 通知节点);通知图未执行时缺省 */
+  draftSimTime?: string;
+  /** 草稿来源:model=模型生成 / degraded=规则默认文案 / restored=中断恢复复用 */
+  source?: "model" | "degraded" | "restored" | string;
+  /** 逐次发布尝试记录(⚑ 节点 detail.publishes 按受众匹配) */
+  publishes: NotificationPublishDTO[];
 }
 
 export type PendingConfirmationDTO =
@@ -174,4 +190,6 @@ export interface DrillDetailDTO {
   /** 复盘报告(completed 演练必有;运行中/终止为 null) */
   report: ReportDTO | null;
   agents: AgentStatusDTO[];
+  /** 失败通知当前可否重试:存在 failed 通知且演练未终止,且(经 API 门面)运行器仍绑定本演练 */
+  notificationRetryable: boolean;
 }

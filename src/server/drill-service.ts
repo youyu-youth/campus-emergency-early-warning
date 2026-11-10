@@ -32,6 +32,7 @@ import type {
   DrillHistoryItemDTO,
   DrillSummaryDTO,
   NotificationDTO,
+  NotificationPublishDTO,
   PendingConfirmationDTO,
   ReportDTO,
   SignalDTO,
@@ -166,7 +167,48 @@ function toNotificationDTO(row: NotificationRow): NotificationDTO {
     content: row.content,
     status: row.status,
     delivery,
+    publishedSimTime: row.published_sim_time,
+    publishes: [],
   };
+}
+
+/**
+ * 把 ⚑ 通知节点的生成与发布记录挂到对应通知(通知中心消费):
+ * - 节点 detail.drafts[] = { audience, notificationId, source } → 草稿来源
+ * - 节点 sim_time → 草稿生成时刻
+ * - 节点 detail.publishes[] = { audience, attempt, status, stats, publishedSimTime } → 逐次尝试
+ */
+function attachNotificationDetails(notifications: NotificationDTO[], timelineRows: TimelineNodeRow[]): void {
+  for (const node of timelineRows) {
+    if (node.phase !== "notification" || node.node_type !== "notification") continue;
+    let detail: Record<string, unknown> = {};
+    try {
+      detail = JSON.parse(node.detail) as Record<string, unknown>;
+    } catch {
+      detail = {};
+    }
+    const drafts = Array.isArray(detail.drafts) ? (detail.drafts as Array<Record<string, unknown>>) : [];
+    for (const draft of drafts) {
+      const notification = notifications.find((n) => n.id === draft.notificationId);
+      if (notification) {
+        notification.draftSimTime = node.sim_time;
+        notification.source = typeof draft.source === "string" ? draft.source : undefined;
+      }
+    }
+    const publishes = Array.isArray(detail.publishes) ? (detail.publishes as Array<Record<string, unknown>>) : [];
+    for (const record of publishes) {
+      const audience = typeof record.audience === "string" ? record.audience : null;
+      const notification = audience ? notifications.find((n) => n.audience === audience) : undefined;
+      if (notification) {
+        notification.publishes.push({
+          attempt: Number(record.attempt ?? 0),
+          status: String(record.status ?? ""),
+          stats: (record.stats ?? {}) as NotificationPublishDTO["stats"],
+          publishedSimTime: typeof record.publishedSimTime === "string" ? record.publishedSimTime : null,
+        });
+      }
+    }
+  }
 }
 
 function toSignalDTO(row: SignalRow): SignalDTO {
@@ -371,6 +413,8 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
   const reportRow = getReportByDrillId(db, drill.id);
   const signals = listSignalsByDrill(db, drill.id).map(toSignalDTO);
   attachSignalPerceptions(signals, timelineRows, eventRow?.signal_id ?? null);
+  const notifications = listNotificationsByDrill(db, drill.id).map(toNotificationDTO);
+  attachNotificationDetails(notifications, timelineRows);
 
   const event: DrillDetailDTO["event"] = eventRow
     ? {
@@ -403,10 +447,11 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
     pendingConfirmation: buildPendingConfirmation(db, drill, state),
     timeline: timelineRows.map(toTimelineDTO),
     tasks: taskRows.map(toTaskDTO),
-    notifications: listNotificationsByDrill(db, drill.id).map(toNotificationDTO),
+    notifications,
     signals,
     report: reportRow ? toReportDTO(reportRow) : null,
     agents: deriveAgentStatuses(state.phase, timelineRows, taskRows, finished),
+    notificationRetryable: notifications.some((n) => n.status === "failed") && drill.status !== "aborted",
   };
 }
 
@@ -498,6 +543,8 @@ export interface DrillServiceApi {
   confirmGrading(severity?: EventSeverity): Promise<{ severity: EventSeverity }>;
   confirmDispatch(tasks?: TaskPlanItem[]): Promise<{ dispatchedCount: number }>;
   confirmNotification(): Promise<{ published: number; failed: number }>;
+  /** 失败通知重试(仅运行器绑定的演练;完成态亦可——⚑ 节点追加发布结果是设计内例外) */
+  retryNotification(drillId: string): Promise<{ retried: number; published: number; failed: number }>;
   activeSummary(): DrillSummaryDTO | null;
   detail(drillId: string): DrillDetailDTO | null;
   history(): DrillHistoryItemDTO[];
@@ -572,12 +619,24 @@ export function drillServiceApi(): DrillServiceApi {
       ensureTicking(service);
       return result;
     },
+    async retryNotification(drillId: string) {
+      // 归属校验:运行器只操作绑定演练(绑定在完成后仍保持,直至下一场 start),防止历史演练误触
+      if (service.runner.drillId !== drillId) {
+        throw new Error("只能重试当前运行器绑定的演练的通知");
+      }
+      return service.runner.retryNotification();
+    },
     activeSummary() {
       const active = getActiveDrills(db)[0];
       return active ? buildDrillSummary(db, active) : null;
     },
     detail(drillId: string) {
-      return buildDrillDetail(db, drillId);
+      const detail = buildDrillDetail(db, drillId);
+      // 重试能力收紧:运行器只操作绑定演练(服务重启后绑定丢失,历史回看只读)
+      if (detail) {
+        detail.notificationRetryable = detail.notificationRetryable && service.runner.drillId === drillId;
+      }
+      return detail;
     },
     history() {
       return buildDrillHistory(db);
