@@ -9,8 +9,8 @@ import { cn } from "@/lib/utils";
 
 const PHASE_ORDER: DrillPhase[] = ["perception", "grading", "handling", "notification", "review"];
 
-/** 节点类别视觉语言:⚑=需人工确认,其余按语义着色(色点永远配文字) */
-const NODE_META: Record<string, { dot: string; label: string }> = {
+/** 节点类别视觉语言:⚑=需人工确认,其余按语义着色(色点永远配文字);回放组件共用 */
+export const NODE_META: Record<string, { dot: string; label: string }> = {
   signal: { dot: "bg-primary", label: "信号" },
   grading: { dot: "bg-severity-ii", label: "定级" },
   dispatch: { dot: "bg-primary", label: "派发" },
@@ -21,14 +21,14 @@ const NODE_META: Record<string, { dot: string; label: string }> = {
   operator_action: { dot: "border-2 border-primary bg-card", label: "操作员" },
 };
 
-function simTimeLabel(iso: string): string {
+export function simTimeLabel(iso: string): string {
   const d = new Date(iso);
   return [d.getHours(), d.getMinutes(), d.getSeconds()]
     .map((n) => String(n).padStart(2, "0"))
     .join(":");
 }
 
-function waitedLabel(waitedMs?: number): string {
+export function waitedLabel(waitedMs?: number): string {
   if (waitedMs === undefined) return "";
   const s = Math.round(waitedMs / 1000);
   return s >= 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s}s`;

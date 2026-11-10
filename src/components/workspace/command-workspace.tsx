@@ -138,7 +138,16 @@ export function CommandWorkspace() {
             演练{drill.status === "completed" ? "已完成" : "已终止"}
             {drill.score !== null && <span className="ml-2 text-muted-foreground">规则评分:{drill.score} 分</span>}
           </span>
-          <span className="text-muted-foreground">复盘报告与时间线回放可在「事件复盘报告」页查看(建设中)</span>
+          {drill.status === "completed" ? (
+            <Link
+              href={`/reports/${drill.id}`}
+              className="font-medium text-primary transition-colors hover:brightness-110"
+            >
+              查看复盘报告 →
+            </Link>
+          ) : (
+            <span className="text-muted-foreground">演练终止不生成复盘报告</span>
+          )}
         </div>
       )}
     </div>

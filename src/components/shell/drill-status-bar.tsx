@@ -36,7 +36,10 @@ export function DrillStatusBar({
 }) {
   const { drill: drillFromContext, pauseResume } = useShellDrill();
   const drill = drillProp !== undefined ? drillProp : drillFromContext;
-  const handlePauseResume = onPauseResume ?? pauseResume ?? undefined;
+  // 运行时护栏:HMR/Fast-Refresh 状态残留可能把非函数(实测出现过 Promise)注入 context,
+  // 直接传给 onClick 会崩掉整条状态条渲染;非函数一律视为未提供
+  const candidate = onPauseResume ?? pauseResume ?? undefined;
+  const handlePauseResume = typeof candidate === "function" ? candidate : undefined;
   const active = drill && ACTIVE_STATUS.includes(drill.status);
 
   return (

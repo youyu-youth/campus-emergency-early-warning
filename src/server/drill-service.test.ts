@@ -114,6 +114,18 @@ describe("演练服务 · 查询 DTO 组装", () => {
     // 编队:全程结束全部已完成,时间线节点可作为各智能体的最近动作
     expect(detail.agents.every((a) => a.status === "done")).toBe(true);
     expect(detail.agents.find((a) => a.key === "perception")?.latestAction).toBeTypeOf("string");
+    // 复盘报告随详情暴露(报告页数据源):形状完整,nodeSeq 全部可溯源到时间线
+    expect(detail.report).not.toBeNull();
+    const report = detail.report!;
+    expect(["model", "degraded"]).toContain(report.source);
+    expect(report.timelineSummary.length).toBeGreaterThan(0);
+    expect(report.problems.length + report.improvements.length).toBeGreaterThan(0);
+    const seqs = new Set(detail.timeline.map((n) => n.seq));
+    expect(report.timelineSummary.every((item) => seqs.has(item.nodeSeq))).toBe(true);
+    expect(report.problems.every((p) => p.nodeSeq === null || seqs.has(p.nodeSeq))).toBe(true);
+    // 指标条数据源:五项指标齐全且总时长为正
+    expect(report.metrics.taskTotal).toBeGreaterThan(0);
+    expect(report.metrics.totalDurationMs).toBeGreaterThan(0);
     db.close();
   });
 

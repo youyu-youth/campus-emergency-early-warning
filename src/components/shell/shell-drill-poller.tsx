@@ -46,6 +46,8 @@ export function ShellDrillPoller() {
     return () => {
       cancelled = true;
       clearInterval(timer);
+      // 归零让任何 HMR/重挂载周期重注干净函数,自愈历史残留的脏状态
+      setPauseResume(null);
     };
   }, [setDrill, setPauseResume]);
 

@@ -12,6 +12,7 @@ import {
   getDrill,
   getEventByDrillId,
   getGraphRunByDrillId,
+  getReportByDrillId,
   getTimelineNode,
   listDrills,
   listNotificationsByDrill,
@@ -19,7 +20,7 @@ import {
   listTasksByDrill,
   listTimelineByDrill,
 } from "../db/queries";
-import type { DrillRow, NotificationRow, SignalRow, TaskRow, TimelineNodeRow } from "../db/types";
+import type { DrillRow, NotificationRow, ReportRow, SignalRow, TaskRow, TimelineNodeRow } from "../db/types";
 import { DrillRunner, type DrillRunState, type StartDrillInput } from "../runner/drill-runner";
 import { formatSimClock, simOffsetMs, type ClockState } from "../simulation/clock";
 import type { ScenarioKey } from "../simulation/scenarios";
@@ -32,6 +33,7 @@ import type {
   DrillSummaryDTO,
   NotificationDTO,
   PendingConfirmationDTO,
+  ReportDTO,
   SignalDTO,
   TaskDTO,
   TimelineNodeDTO,
@@ -46,6 +48,7 @@ export type {
   DrillSummaryDTO,
   NotificationDTO,
   PendingConfirmationDTO,
+  ReportDTO,
   SignalDTO,
   TaskDTO,
   TimelineNodeDTO,
@@ -147,6 +150,43 @@ function toSignalDTO(row: SignalRow): SignalDTO {
     confidence: row.confidence,
     status: row.status,
     simTime: row.sim_time,
+  };
+}
+
+/** 复盘报告行 → DTO(JSON 列解析失败容忍:置空数组/零指标,报告头仍可呈现) */
+function toReportDTO(row: ReportRow): ReportDTO {
+  const parseArray = <T,>(json: string): T[] => {
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  };
+  let metrics: ReportDTO["metrics"] = {
+    totalDurationMs: 0,
+    reportDurationMs: 0,
+    gradingDurationMs: 0,
+    taskDone: 0,
+    taskTotal: 0,
+    resourceTotal: 0,
+  };
+  try {
+    metrics = { ...metrics, ...(JSON.parse(row.metrics) as Partial<ReportDTO["metrics"]>) };
+  } catch {
+    // 保留零指标
+  }
+  return {
+    timelineSummary: parseArray<ReportDTO["timelineSummary"][number]>(row.timeline_summary),
+    problems: parseArray<ReportDTO["problems"][number]>(row.problems).map((p) => ({
+      nodeSeq: typeof p.nodeSeq === "number" ? p.nodeSeq : null,
+      title: String(p.title ?? ""),
+      detail: String(p.detail ?? ""),
+    })),
+    improvements: parseArray<ReportDTO["improvements"][number]>(row.improvements),
+    metrics,
+    source: row.source === "degraded" ? "degraded" : "model",
+    createdAt: row.created_at,
   };
 }
 
@@ -253,6 +293,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
   const timelineRows = listTimelineByDrill(db, drill.id);
   const taskRows = listTasksByDrill(db, drill.id);
   const finished = drill.status === "completed" || drill.status === "aborted";
+  const reportRow = getReportByDrillId(db, drill.id);
 
   const event: DrillDetailDTO["event"] = eventRow
     ? {
@@ -286,6 +327,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
     tasks: taskRows.map(toTaskDTO),
     notifications: listNotificationsByDrill(db, drill.id).map(toNotificationDTO),
     signals: listSignalsByDrill(db, drill.id).map(toSignalDTO),
+    report: reportRow ? toReportDTO(reportRow) : null,
     agents: deriveAgentStatuses(state.phase, timelineRows, taskRows, finished),
   };
 }

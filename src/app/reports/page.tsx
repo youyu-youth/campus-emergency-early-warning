@@ -1,8 +1,12 @@
-import Link from "next/link";
-import { ClipboardList } from "lucide-react";
-
-import { EmptyState } from "@/components/feedback/empty-state";
+import { ReportsList } from "@/components/reports/reports-list";
 import { PageHeader } from "@/components/shell/page-header";
+import { SCENARIOS } from "@/simulation/scenarios";
+import type { ScenarioKey } from "@/simulation/scenarios";
+
+const SCENARIO_NAMES = Object.fromEntries(Object.values(SCENARIOS).map((s) => [s.key, s.name])) as Record<
+  ScenarioKey,
+  string
+>;
 
 export default function ReportsPage() {
   return (
@@ -11,17 +15,7 @@ export default function ReportsPage() {
         title="事件复盘报告"
         description="演练历史、时间线回放、处置指标与改进建议"
       />
-      <EmptyState
-        icon={ClipboardList}
-        title="暂无演练记录"
-        description="完成一场演练后，时间线回放、规则评分与改进建议将在此归档，每条结论可溯源到时间线节点。"
-        action={
-          <Link href="/simulation" className="text-sm font-medium text-primary hover:brightness-110">
-            发起首场演练
-          </Link>
-        }
-        className="flex-1"
-      />
+      <ReportsList scenarioNames={SCENARIO_NAMES} />
     </>
   );
 }

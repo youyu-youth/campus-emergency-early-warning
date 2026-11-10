@@ -4,6 +4,7 @@
 import type { DrillPhase, DrillStatus, EventSeverity } from "@/simulation/state-machines";
 import type { ScenarioKey } from "@/simulation/scenarios";
 import type { TaskPlanItem } from "@/simulation/task-rules";
+import type { DrillMetrics } from "@/simulation/score-rules";
 
 export interface DrillSummaryDTO {
   id: string;
@@ -42,6 +43,35 @@ export interface DrillHistoryItemDTO {
   score: number | null;
   startedAt: string | null;
   endedAt: string | null;
+}
+
+export interface ReportTimelineItemDTO {
+  /** 归纳条目对应的时间线节点序号(落库前已净化,保证可溯源) */
+  nodeSeq: number;
+  summary: string;
+}
+
+export interface ReportProblemDTO {
+  /** 问题对应的时间线节点序号;失败任务/通知类问题可能无对应节点 */
+  nodeSeq: number | null;
+  title: string;
+  detail: string;
+}
+
+export interface ReportImprovementDTO {
+  title: string;
+  detail: string;
+}
+
+/** 复盘报告(completed 演练必有;model=模型生成,degraded=模型失败后规则骨架生成) */
+export interface ReportDTO {
+  timelineSummary: ReportTimelineItemDTO[];
+  problems: ReportProblemDTO[];
+  improvements: ReportImprovementDTO[];
+  /** 规则指标(评分输入,指标条数据源) */
+  metrics: DrillMetrics;
+  source: "model" | "degraded";
+  createdAt: string;
 }
 
 export interface TimelineNodeDTO {
@@ -119,5 +149,7 @@ export interface DrillDetailDTO {
   tasks: TaskDTO[];
   notifications: NotificationDTO[];
   signals: SignalDTO[];
+  /** 复盘报告(completed 演练必有;运行中/终止为 null) */
+  report: ReportDTO | null;
   agents: AgentStatusDTO[];
 }

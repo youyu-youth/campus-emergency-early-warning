@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { AppNavRail } from "@/components/shell/app-nav-rail";
 import { DrillStatusBar } from "@/components/shell/drill-status-bar";
@@ -23,7 +24,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <ShellDrillProvider>
             <ShellDrillPoller />
             <div className="flex h-dvh overflow-hidden">
-              <AppNavRail />
+              {/* usePathname 属运行时数据:动态路由(/reports/[id])预渲染下须在 Suspense 内 */}
+              <Suspense fallback={null}>
+                <AppNavRail />
+              </Suspense>
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 {/* 默认空闲;推演页/工作区经 useShellDrill 注入运行态 DrillSummary */}
                 <DrillStatusBar />

@@ -8,51 +8,11 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { SeverityBadge } from "@/components/status/severity-badge";
 import { StateChip } from "@/components/status/state-chip";
 import type { DrillHistoryItemDTO } from "@/lib/drill-types";
+import { drillRowHref, sortDrills, startedAtLabel, type DrillSortKey } from "@/lib/drill-list-utils";
 import { cn } from "@/lib/utils";
-import type { EventSeverity } from "@/simulation/state-machines";
 import type { ScenarioKey } from "@/simulation/scenarios";
 
-type SortKey = "name" | "startedAt" | "scenario" | "severity" | "score" | "status";
-
-/** 等级权重:Ⅰ 重大最高(降序 = 重大在前) */
-const SEVERITY_RANK: Record<EventSeverity, number> = { I: 4, II: 3, III: 2, IV: 1 };
-
-function startedAtLabel(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** null(未定级/未评分/未发起)恒排末尾,不随升降序浮动 */
-function compareNullable<T>(a: T | null, b: T | null, compare: (x: T, y: T) => number): number {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  return compare(a, b);
-}
-
-function sortDrills(drills: DrillHistoryItemDTO[], key: SortKey, dir: "asc" | "desc", scenarioNames: Record<ScenarioKey, string>): DrillHistoryItemDTO[] {
-  const factor = dir === "asc" ? 1 : -1;
-  return [...drills].sort((a, b) => {
-    switch (key) {
-      case "name":
-        return factor * a.name.localeCompare(b.name, "zh-Hans-CN");
-      case "startedAt":
-        return compareNullable(a.startedAt, b.startedAt, (x, y) => factor * (Date.parse(x) - Date.parse(y)));
-      case "scenario":
-        return factor * (scenarioNames[a.scenarioKey] ?? "").localeCompare(scenarioNames[b.scenarioKey] ?? "", "zh-Hans-CN");
-      case "severity":
-        return compareNullable(a.severity, b.severity, (x, y) => factor * (SEVERITY_RANK[x] - SEVERITY_RANK[y]));
-      case "score":
-        return compareNullable(a.score, b.score, (x, y) => factor * (x - y));
-      case "status":
-        return factor * a.status.localeCompare(b.status);
-    }
-  });
-}
-
-const COLUMNS: Array<{ key: SortKey; label: string; className?: string }> = [
+const COLUMNS: Array<{ key: DrillSortKey; label: string; className?: string }> = [
   { key: "name", label: "演练" },
   { key: "startedAt", label: "发起时间" },
   { key: "scenario", label: "场景" },
@@ -61,36 +21,47 @@ const COLUMNS: Array<{ key: SortKey; label: string; className?: string }> = [
   { key: "status", label: "状态" },
 ];
 
-/** 下区 · 演练历史表格(docs/design.md §4.1):时间/场景/等级/评分/状态可排序;行点击进工作区查看 */
+/** 演练列表表格(docs/design.md §4.1/§4.6):时间/场景/等级/评分/状态可排序;行点击按状态进报告页/工作区。
+ *  flow 变体供 /reports 列表页:自然高度随页面滚动;默认 panel 变体为指挥台视口内填充 */
 export function DrillHistoryTable({
   drills,
   scenarioNames,
   className,
+  title = "演练历史",
+  flow = false,
 }: {
   /** null = 首次加载中 */
   drills: DrillHistoryItemDTO[] | null;
   scenarioNames: Record<ScenarioKey, string>;
   className?: string;
+  title?: string;
+  flow?: boolean;
 }) {
   const router = useRouter();
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "startedAt", dir: "desc" });
+  const [sort, setSort] = useState<{ key: DrillSortKey; dir: "asc" | "desc" }>({ key: "startedAt", dir: "desc" });
 
   const sorted = useMemo(
     () => (drills ? sortDrills(drills, sort.key, sort.dir, scenarioNames) : null),
     [drills, sort, scenarioNames],
   );
 
-  const toggleSort = (key: SortKey) => {
+  const toggleSort = (key: DrillSortKey) => {
     setSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
   };
 
   return (
-    <section className={cn("flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card", className)}>
+    <section
+      className={cn(
+        "overflow-hidden rounded-md border border-border bg-card",
+        flow ? "" : "flex min-h-0 flex-col",
+        className,
+      )}
+    >
       <div className="flex h-9 flex-none items-center justify-between border-b border-border px-3 text-xs font-bold">
-        演练历史
+        {title}
         {sorted && <span className="font-normal text-muted-foreground/70">{sorted.length} 场</span>}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className={flow ? "" : "min-h-0 flex-1 overflow-auto"}>
         <table className="w-full border-collapse text-left text-[13px]">
           <thead className="sticky top-0 z-10 bg-card">
             <tr className="border-b border-border">
@@ -155,12 +126,12 @@ export function DrillHistoryTable({
                 : sorted.map((drill) => (
                     <tr
                       key={drill.id}
-                      onClick={() => router.push(`/command?drill=${drill.id}`)}
+                      onClick={() => router.push(drillRowHref(drill))}
                       className="cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-secondary/50"
                     >
                       <td className="max-w-72 truncate px-3 py-2.5">
                         <Link
-                          href={`/command?drill=${drill.id}`}
+                          href={drillRowHref(drill)}
                           className="font-medium hover:text-primary"
                           title={drill.name}
                         >
