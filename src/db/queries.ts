@@ -64,10 +64,28 @@ export function updateDrillClock(db: Db, id: string, clockState: string): void {
   );
 }
 
+/** 活跃集合含暂停中:暂停的演练仍是唯一焦点,需在状态条/指挥台可见且不可再发起 */
 export function getActiveDrills(db: Db): DrillRow[] {
   return db
-    .prepare("SELECT * FROM drills WHERE status IN ('running', 'awaiting_confirmation') ORDER BY created_at")
+    .prepare("SELECT * FROM drills WHERE status IN ('running', 'awaiting_confirmation', 'paused') ORDER BY created_at")
     .all() as DrillRow[];
+}
+
+/** 重启前已暂停的演练(恢复绑定用);无则 undefined */
+export function getPausedDrill(db: Db): DrillRow | undefined {
+  return db
+    .prepare("SELECT * FROM drills WHERE status = 'paused' ORDER BY created_at LIMIT 1")
+    .get() as DrillRow | undefined;
+}
+
+/** 演练列表(指挥台历史表格):关联事件等级,按创建时间倒序 */
+export function listDrills(db: Db, limit = 100): Array<DrillRow & { severity: string | null }> {
+  return db
+    .prepare(
+      `SELECT d.*, (SELECT severity FROM events WHERE drill_id = d.id LIMIT 1) AS severity
+       FROM drills d ORDER BY d.created_at DESC LIMIT ?`,
+    )
+    .all(limit) as Array<DrillRow & { severity: string | null }>;
 }
 
 /** 至多一场 running(单事件焦点不变式),重启恢复用;无则 undefined */

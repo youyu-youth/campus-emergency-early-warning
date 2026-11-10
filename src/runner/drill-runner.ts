@@ -23,6 +23,7 @@ import {
   getEventByDrillId,
   getLastTimelineActivityMs,
   getGraphRunByDrillId,
+  getPausedDrill,
   getRunningDrill,
   getTimelineNode,
   insertDrill,
@@ -892,12 +893,17 @@ export class DrillRunner {
   recoverInterruptedDrills(): number {
     const { db } = this.deps;
     const nowMs = this.deps.now?.() ?? Date.now();
+    if (this.drillIdValue) return 0; // 已绑定演练则无事可恢复(重复调用幂等)
     const interrupted = getRunningDrill(db);
     if (!interrupted) {
       // 无 running:若有确认等待中的演练,直接绑定接续(时钟已停,无需转态)
       const awaitingId = getAwaitingConfirmationDrillId(db);
       if (awaitingId) this.drillIdValue = awaitingId;
-      return awaitingId ? 1 : 0;
+      if (awaitingId) return 1;
+      // 重启前已暂停的演练同样绑定(时钟已冻结),供操作员手动恢复
+      const paused = getPausedDrill(db);
+      if (paused) this.drillIdValue = paused.id;
+      return paused ? 1 : 0;
     }
 
     const clock = JSON.parse(interrupted.clock_state) as ClockState;

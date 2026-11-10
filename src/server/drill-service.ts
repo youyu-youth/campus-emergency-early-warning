@@ -13,11 +13,13 @@ import {
   getEventByDrillId,
   getGraphRunByDrillId,
   getTimelineNode,
+  listDrills,
   listNotificationsByDrill,
+  listSignalsByDrill,
   listTasksByDrill,
   listTimelineByDrill,
 } from "../db/queries";
-import type { DrillRow, NotificationRow, TaskRow, TimelineNodeRow } from "../db/types";
+import type { DrillRow, NotificationRow, SignalRow, TaskRow, TimelineNodeRow } from "../db/types";
 import { DrillRunner, type DrillRunState, type StartDrillInput } from "../runner/drill-runner";
 import { formatSimClock, simOffsetMs, type ClockState } from "../simulation/clock";
 import type { ScenarioKey } from "../simulation/scenarios";
@@ -26,9 +28,11 @@ import type { TaskPlanItem } from "../simulation/task-rules";
 import type {
   AgentStatusDTO,
   DrillDetailDTO,
+  DrillHistoryItemDTO,
   DrillSummaryDTO,
   NotificationDTO,
   PendingConfirmationDTO,
+  SignalDTO,
   TaskDTO,
   TimelineNodeDTO,
 } from "../lib/drill-types";
@@ -38,9 +42,11 @@ const TICK_INTERVAL_MS = 200;
 export type {
   AgentStatusDTO,
   DrillDetailDTO,
+  DrillHistoryItemDTO,
   DrillSummaryDTO,
   NotificationDTO,
   PendingConfirmationDTO,
+  SignalDTO,
   TaskDTO,
   TimelineNodeDTO,
 } from "../lib/drill-types";
@@ -129,6 +135,18 @@ function toNotificationDTO(row: NotificationRow): NotificationDTO {
     content: row.content,
     status: row.status,
     delivery,
+  };
+}
+
+function toSignalDTO(row: SignalRow): SignalDTO {
+  return {
+    id: row.id,
+    sourceKind: row.source_kind,
+    location: row.location,
+    signalType: row.signal_type,
+    confidence: row.confidence,
+    status: row.status,
+    simTime: row.sim_time,
   };
 }
 
@@ -267,8 +285,23 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
     timeline: timelineRows.map(toTimelineDTO),
     tasks: taskRows.map(toTaskDTO),
     notifications: listNotificationsByDrill(db, drill.id).map(toNotificationDTO),
+    signals: listSignalsByDrill(db, drill.id).map(toSignalDTO),
     agents: deriveAgentStatuses(state.phase, timelineRows, taskRows, finished),
   };
+}
+
+/** 指挥台历史表格消费的演练列表(时间倒序;等级取关联事件) */
+export function buildDrillHistory(db: Db): DrillHistoryItemDTO[] {
+  return listDrills(db).map((row) => ({
+    id: row.id,
+    name: row.name,
+    scenarioKey: row.scenario_key as DrillHistoryItemDTO["scenarioKey"],
+    status: row.status as DrillHistoryItemDTO["status"],
+    severity: (row.severity as EventSeverity | null) ?? null,
+    score: row.score,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+  }));
 }
 
 // —— 服务单例(runner 生命周期与 tick 循环) ——
@@ -344,6 +377,7 @@ export interface DrillServiceApi {
   confirmNotification(): Promise<{ published: number; failed: number }>;
   activeSummary(): DrillSummaryDTO | null;
   detail(drillId: string): DrillDetailDTO | null;
+  history(): DrillHistoryItemDTO[];
   modelLabel: string;
   offline: boolean;
   lastError: string | null;
@@ -408,6 +442,9 @@ export function drillServiceApi(): DrillServiceApi {
     },
     detail(drillId: string) {
       return buildDrillDetail(db, drillId);
+    },
+    history() {
+      return buildDrillHistory(db);
     },
   };
   return wrap;

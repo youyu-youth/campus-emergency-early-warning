@@ -4,11 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import { openDatabase } from "../db/client";
-import { getDrill, getGraphRunByDrillId } from "../db/queries";
+import { getActiveDrills, getDrill, getGraphRunByDrillId } from "../db/queries";
 import { DEMO_SCRIPTS } from "../../scripts/demo-scripts";
 import { ScriptedModel } from "../agents/model";
 import { DrillRunner } from "../runner/drill-runner";
-import { buildDrillDetail, buildDrillSummary } from "./drill-service";
+import { buildDrillDetail, buildDrillHistory, buildDrillSummary } from "./drill-service";
 
 async function driveUntilNotRunning(runner: DrillRunner, realNow: { t: number }, maxSteps = 400): Promise<void> {
   for (let i = 0; i < maxSteps && runner.status === "running"; i++) {
@@ -130,6 +130,48 @@ describe("演练服务 · 查询 DTO 组装", () => {
     expect(detail.agents.find((a) => a.key === "review")?.status).toBe("standby");
     expect(detail.agents.find((a) => a.key === "perception")?.status).toBe("done");
     expect(detail.agents.find((a) => a.key === "command")?.status).toBe("working");
+    db.close();
+  });
+
+  it("指挥台数据:详情含信号,历史列表可查,暂停仍是活跃演练且重启可接续", async () => {
+    const db = openDatabase(":memory:");
+    const model = new ScriptedModel(DEMO_SCRIPTS.fire_alarm);
+    const realNow = { t: Date.parse("2026-11-08T08:00:00.000Z") };
+    const runner = new DrillRunner({ db, model, now: () => realNow.t });
+    const { drillId } = await runner.start({ scenarioKey: "fire_alarm", seed: 42, speed: 60 });
+    await driveUntilNotRunning(runner, realNow); // 定级确认等待中(信号与事件已产生)
+
+    // 详情暴露监测信号(指挥台态势侧栏数据源)
+    const detail = buildDrillDetail(db, drillId)!;
+    expect(detail.signals.length).toBeGreaterThan(0);
+    expect(detail.signals[0].simTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(["sensor", "camera"]).toContain(detail.signals[0].sourceKind);
+
+    // 历史列表:进行中演练等级/评分尚空
+    const history = buildDrillHistory(db);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      id: drillId,
+      scenarioKey: "fire_alarm",
+      status: "awaiting_confirmation",
+      severity: null,
+      score: null,
+    });
+
+    // 确认定级后,等级进入历史条目
+    await runner.confirmGrading({});
+    expect(buildDrillHistory(db)[0].severity).toMatch(/^(I|II|III|IV)$/);
+
+    // 暂停中仍是活跃演练(状态条/指挥台可见,且占用单事件焦点不可再发起)
+    await runner.pause();
+    expect(getActiveDrills(db).map((d) => d.id)).toEqual([drillId]);
+
+    // 重启:新 runner 绑定已暂停演练,操作员可手动恢复
+    const revived = new DrillRunner({ db, model, now: () => realNow.t });
+    expect(revived.recoverInterruptedDrills()).toBe(1);
+    expect(revived.drillId).toBe(drillId);
+    await revived.resume();
+    expect(getDrill(db, drillId)!.status).toBe("running");
     db.close();
   });
 });

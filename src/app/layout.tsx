@@ -18,18 +18,19 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="zh-CN" className="h-full antialiased">
       <body className="min-h-full">
-        {/* 全局骨架:左侧导航(深藏青石墨) + 顶部演练状态条 + 浅冷灰画布(docs/design.md §2.1) */}
-        <ShellDrillProvider>
-          <ShellDrillPoller />
-          <div className="flex min-h-screen">
-            <AppNavRail />
-            <div className="flex min-w-0 flex-1 flex-col">
-              {/* 默认空闲;推演页/工作区经 useShellDrill 注入运行态 DrillSummary */}
-              <DrillStatusBar />
-              <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+          {/* 全局骨架:左侧导航(深藏青石墨) + 顶部演练状态条 + 浅冷灰画布(docs/design.md §2.1)
+              壳层定高一屏:导航与状态条恒固定,页面内容在 main 内滚动 */}
+          <ShellDrillProvider>
+            <ShellDrillPoller />
+            <div className="flex h-dvh overflow-hidden">
+              <AppNavRail />
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {/* 默认空闲;推演页/工作区经 useShellDrill 注入运行态 DrillSummary */}
+                <DrillStatusBar />
+                <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">{children}</main>
+              </div>
             </div>
-          </div>
-        </ShellDrillProvider>
+          </ShellDrillProvider>
       </body>
     </html>
   );

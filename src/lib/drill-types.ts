@@ -22,6 +22,28 @@ export interface AgentStatusDTO {
   latestAction: string | null;
 }
 
+export interface SignalDTO {
+  id: string;
+  sourceKind: "sensor" | "camera" | string;
+  location: string;
+  signalType: string;
+  confidence: number;
+  status: string;
+  simTime: string;
+}
+
+/** 演练历史条目(指挥台历史表格);severity 来自关联事件,score 终止时为 null */
+export interface DrillHistoryItemDTO {
+  id: string;
+  name: string;
+  scenarioKey: ScenarioKey;
+  status: DrillStatus;
+  severity: EventSeverity | null;
+  score: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
 export interface TimelineNodeDTO {
   id: string;
   seq: number;
@@ -96,5 +118,6 @@ export interface DrillDetailDTO {
   timeline: TimelineNodeDTO[];
   tasks: TaskDTO[];
   notifications: NotificationDTO[];
+  signals: SignalDTO[];
   agents: AgentStatusDTO[];
 }
