@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 
 /** 报告详情(docs/design.md §4.6):报告头(摘要+总评分) → 指标条 → 时间线归纳/回放 → 问题分析 → 改进建议。
  *  结论可溯源:问题与归纳条目可定位到时间线对应节点(滚动+展开+高亮)。一次性拉取,文档型只读。 */
-export function ReportView({ scenarioNames }: { scenarioNames: Record<string, string> }) {
+export function ReportView() {
   const { id: drillId } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<DrillDetailDTO | null>(null);
   const [missing, setMissing] = useState(false);
@@ -143,7 +143,7 @@ export function ReportView({ scenarioNames }: { scenarioNames: Record<string, st
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
               {event?.severity && <SeverityBadge severity={event.severity} size="sm" />}
               <span>
-                场景<span className="ml-1.5 text-foreground/80">{scenarioNames[drill.scenarioKey] ?? drill.scenarioKey}</span>
+                场景<span className="ml-1.5 text-foreground/80">{drill.scenarioName}</span>
               </span>
               <span>
                 种子<span className="ml-1.5 font-mono text-foreground/80 tabular-nums">{drill.seed}</span>

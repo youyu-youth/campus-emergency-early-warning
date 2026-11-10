@@ -10,11 +10,11 @@ import { notificationPrompt } from "./prompts";
 export const NotificationInputSchema = z.object({
   audience: z.enum(["staff_students", "parents"]),
   event: z.object({
-    type: z.enum(["fire_alarm", "medical_emergency"]),
+    type: z.string().min(1),
     title: z.string().min(1),
     location: z.string().min(1),
   }),
-  scenarioKey: z.enum(["fire_alarm", "medical_emergency"]),
+  scenarioKey: z.string().min(1),
   scenarioName: z.string().min(1),
   severity: z.enum(["I", "II", "III", "IV"]),
   simTimeLabel: z.string().min(1),

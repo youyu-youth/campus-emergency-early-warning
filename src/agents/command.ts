@@ -1,7 +1,7 @@
 // 指挥调度智能体:定级(runGrading)、任务方案(runDispatch)、重新调度评估(runDispatchEvaluation)
 // 输出经 zod 运行时校验;坏输出或超时 → 重试一次 → 仍失败按规则默认结果降级(方案用场景默认,评估保守不加派)
 
-import { DEFAULT_TASK_PLANS } from "../simulation/task-rules";
+import { defaultTasksFor } from "../simulation/task-rules";
 import type { EventSeverity } from "../simulation/state-machines";
 import { z } from "zod";
 import { invokeAgent, type AgentCallResult, type AgentChatModel } from "./model";
@@ -9,12 +9,12 @@ import { dispatchPlanPrompt, gradingPrompt, redispatchPrompt } from "./prompts";
 
 export const GradingInputSchema = z.object({
   event: z.object({
-    type: z.enum(["fire_alarm", "medical_emergency"]),
+    type: z.string().min(1),
     title: z.string().min(1),
     location: z.string().min(1),
     detectedSimTime: z.string().min(1),
   }),
-  scenarioKey: z.enum(["fire_alarm", "medical_emergency"]),
+  scenarioKey: z.string().min(1),
   scenarioName: z.string().min(1),
   intensity: z.enum(["low", "medium", "high"]),
   /** 感知智能体提取的证据要点(逐条) */
@@ -110,8 +110,8 @@ export async function runDispatch(
 /** 规则默认方案:直接采用场景默认三角色任务,保证处置可推进 */
 export function defaultDispatchPlan(input: DispatchInput): DispatchPlanOutput {
   return {
-    tasks: DEFAULT_TASK_PLANS[input.scenarioKey].map((t) => ({ ...t })),
-    reasoning: "模型输出无效或超时,按规则默认方案:采用场景内置三角色任务模板派发。",
+    tasks: defaultTasksFor(input.scenarioKey, input.scenarioName),
+    reasoning: "模型输出无效或超时,按规则默认方案:采用三角色任务模板派发(内置场景用专属模板,自定义场景用通用模板)。",
   };
 }
 

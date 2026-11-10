@@ -12,7 +12,7 @@ import { StateChip } from "@/components/status/state-chip";
 import type { DrillDetailDTO, PendingConfirmationDTO } from "@/lib/drill-types";
 import { cn } from "@/lib/utils";
 import { PHASE_LABELS, PHASE_ORDER } from "@/simulation/state-machines";
-import type { ScenarioCard } from "./simulation-launcher";
+import type { ScenarioCardDTO } from "@/lib/drill-types";
 
 const POLL_INTERVAL_MS = 2000;
 const SPEED_STEPS = [1, 2, 4, 8] as const;
@@ -31,7 +31,7 @@ export function SimulationConsole({
   onExited,
 }: {
   drillId: string;
-  scenarios: ScenarioCard[];
+  scenarios: ScenarioCardDTO[];
   /** 终态后「返回发起配置」回调:通知宿主重查活跃演练,切回空闲态 */
   onExited: () => void;
 }) {
@@ -219,7 +219,7 @@ export function SimulationConsole({
             <h3 className="text-xs font-bold tracking-widest text-muted-foreground">场景参数(只读)</h3>
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 text-[13px]">
               <dt className="text-muted-foreground">场景</dt>
-              <dd className="font-medium">{scenarioCard?.name ?? detail.drill.scenarioKey}</dd>
+              <dd className="font-medium">{detail.drill.scenarioName}</dd>
               <dt className="text-muted-foreground">地点</dt>
               <dd>{detail.event?.location ?? scenarioCard?.location ?? "—"}</dd>
               <dt className="text-muted-foreground">随机种子</dt>

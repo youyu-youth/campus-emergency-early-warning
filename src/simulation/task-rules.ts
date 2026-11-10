@@ -3,7 +3,6 @@
 
 import type { AgentRole } from "./state-machines";
 import { mulberry32, randInt, jitter } from "./rng";
-import type { ScenarioKey } from "./scenarios";
 
 /** 任务方案条目(调度智能体输出与落库共用形状) */
 export interface TaskPlanItem {
@@ -73,8 +72,8 @@ export function computeTaskOutcome(
   };
 }
 
-/** 场景默认任务方案:调度智能体降级时的规则兜底,覆盖三角色保证处置可推进 */
-export const DEFAULT_TASK_PLANS: Record<ScenarioKey, TaskPlanItem[]> = {
+/** 内置场景的默认任务方案(调度智能体降级时的规则兜底) */
+const BUILTIN_TASK_PLANS: Record<string, TaskPlanItem[]> = {
   fire_alarm: [
     { role: "security", title: "封锁并引导疏散", description: "封锁图书馆三层东区,引导人员经西侧楼梯疏散" },
     { role: "medical", title: "医疗待命", description: "在楼下集结点待命,评估潜在伤员并准备急救" },
@@ -86,3 +85,17 @@ export const DEFAULT_TASK_PLANS: Record<ScenarioKey, TaskPlanItem[]> = {
     { role: "logistics", title: "器材与转运支援", description: "运送担架与急救器材到现场,协助模拟转运" },
   ],
 };
+
+/**
+ * 场景默认任务方案:内置场景用专属清单,自定义场景用按场景名拼装的三角色通用模板
+ * (保证任意场景下调度智能体降级时处置仍可推进,不再有缺条目崩溃点)
+ */
+export function defaultTasksFor(scenarioKey: string, scenarioName: string): TaskPlanItem[] {
+  const builtin = BUILTIN_TASK_PLANS[scenarioKey];
+  if (builtin) return builtin.map((t) => ({ ...t }));
+  return [
+    { role: "security", title: "现场管控与警戒", description: `对${scenarioName}事发区域实施警戒隔离,疏导围观人员,预留应急通道` },
+    { role: "medical", title: "医疗待命支援", description: `在事发附近集结待命,评估${scenarioName}潜在伤员并准备急救` },
+    { role: "logistics", title: "保障与联动支援", description: `保障事发区域周边设施联动与物资供应,协助处置` },
+  ];
+}

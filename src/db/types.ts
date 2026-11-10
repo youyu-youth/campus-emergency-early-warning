@@ -114,3 +114,24 @@ export interface ReportRow {
   source: string;
   created_at: string;
 }
+
+export interface ScenarioRow {
+  key: string;
+  name: string;
+  description: string;
+  /** 事件类型中文名(eventType 语义 = 场景 key) */
+  event_type_label: string;
+  default_sim_start: string;
+  /** JSON：{ location, intensity } */
+  defaults: string;
+  /** JSON：SignalTemplate[](payload 显式含 simulated:true) */
+  signals: string;
+  /** JSON：EvolutionTemplate[] */
+  evolution: string;
+  /** 1=内置锁定(不可改删,可复制) */
+  is_builtin: number;
+  /** 1=软删除(不再可选发起;历史演练名仍可查) */
+  is_deleted: number;
+  created_at: string;
+  updated_at: string;
+}

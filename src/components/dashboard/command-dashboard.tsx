@@ -15,7 +15,6 @@ import { SituationSidebar } from "./situation-sidebar";
 import type { DrillDetailDTO, DrillHistoryItemDTO } from "@/lib/drill-types";
 import { cn } from "@/lib/utils";
 import { PHASE_LABELS, type DrillPhase } from "@/simulation/state-machines";
-import type { ScenarioKey } from "@/simulation/scenarios";
 
 const DETAIL_POLL_MS = 2000;
 
@@ -25,7 +24,7 @@ const ACTIVE_STATUSES = new Set(["running", "paused", "awaiting_confirmation"]);
 
 /** 综合指挥台(docs/design.md §4.1):演练状态主面板 + 系统态势侧栏 + 演练历史表格。
  *  摘要直接消费壳层轮询(useShellDrill),活跃时另开详情轮询供侧栏,历史在发起/收尾时刷新。 */
-export function CommandDashboard({ scenarioNames }: { scenarioNames: Record<ScenarioKey, string> }) {
+export function CommandDashboard() {
   const { drill } = useShellDrill();
   const active = drill !== null && ACTIVE_STATUSES.has(drill.status);
   const drillId = active ? drill.id : null;
@@ -146,7 +145,7 @@ export function CommandDashboard({ scenarioNames }: { scenarioNames: Record<Scen
               {activeDetail && (
                 <p className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
                   <span>
-                    场景<span className="ml-1.5 text-foreground/80">{scenarioNames[activeDetail.drill.scenarioKey] ?? activeDetail.drill.scenarioKey}</span>
+                    场景<span className="ml-1.5 text-foreground/80">{activeDetail.drill.scenarioName}</span>
                   </span>
                   <span>
                     种子<span className="ml-1.5 font-mono text-foreground/80 tabular-nums">{activeDetail.drill.seed}</span>
@@ -211,7 +210,7 @@ export function CommandDashboard({ scenarioNames }: { scenarioNames: Record<Scen
       </div>
 
       {/* 下区:演练历史表格 */}
-      <DrillHistoryTable drills={history} scenarioNames={scenarioNames} className="min-h-56 flex-1" />
+      <DrillHistoryTable drills={history} className="min-h-56 flex-1" />
     </div>
   );
 }

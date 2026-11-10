@@ -68,7 +68,8 @@ import {
   simTimeIso,
   type ClockState,
 } from "../simulation/clock";
-import { generateEvolution, generateSignalScript, getScenario } from "../simulation/engine";
+import { generateEvolution, generateSignalScript } from "../simulation/engine";
+import { requireScenario } from "../simulation/scenario-store";
 import type { ScenarioKey } from "../simulation/scenarios";
 import {
   computeDelivery,
@@ -157,7 +158,7 @@ export class DrillRunner {
         `同一时间至多一场运行中的演练:「${active[0].name}」(${active[0].id})正处于 ${active[0].status}`,
       );
     }
-    const scenario = getScenario(input.scenarioKey);
+    const scenario = requireScenario(db, input.scenarioKey);
     const nowMs = this.deps.now?.() ?? Date.now();
     const clock = startClock(simOriginFromStart(scenario.defaultSimStart, nowMs), nowMs, input.speed ?? 1);
     const drill = insertDrill(db, {
@@ -197,7 +198,7 @@ export class DrillRunner {
     const nowMs = this.deps.now?.() ?? Date.now();
     const offset = simOffsetMs(clock, nowMs);
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const script = generateSignalScript(scenarioKey, drill.seed);
+    const script = generateSignalScript(requireScenario(db, scenarioKey), drill.seed);
     const bySourceRef = new Map(script.map((s) => [s.sourceRef, s]));
 
     // 到期判定按 source_ref 去重(而非已写条数):进程中断遗留的 new 信号会重新交给感知图,不会被跳过
@@ -287,7 +288,7 @@ export class DrillRunner {
     const event = getEventByDrillId(db, drill.id);
     if (!event) return;
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const scenario = getScenario(scenarioKey);
+    const scenario = requireScenario(db, scenarioKey);
     const params = JSON.parse(drill.params) as {
       intensity?: GradingInput["intensity"];
       autoConfirm?: boolean;
@@ -402,7 +403,7 @@ export class DrillRunner {
 
     // 里程碑到期写入(规则驱动)并在处置中触发重新调度评估
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const evolution = generateEvolution(scenarioKey, drill.seed);
+    const evolution = generateEvolution(requireScenario(db, scenarioKey), drill.seed);
     for (const evo of evolution) {
       if (evo.offsetMs > offsetMs) break;
       if (!handling.writtenMilestoneOffsets.includes(evo.offsetMs)) {
@@ -543,7 +544,7 @@ export class DrillRunner {
   ): Promise<void> {
     const { db } = this.deps;
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const scenario = getScenario(scenarioKey);
+    const scenario = requireScenario(db, scenarioKey);
     const requiresConfirmation = !JSON.parse(drill.params).autoConfirm;
 
     // 恢复路径:⚑ 节点已写而快照丢失 → 不重复建节点,直接从节点重建
@@ -959,7 +960,7 @@ export class DrillRunner {
   ): Promise<void> {
     const { db } = this.deps;
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const scenario = getScenario(scenarioKey);
+    const scenario = requireScenario(db, scenarioKey);
     const requiresConfirmation = !JSON.parse(drill.params).autoConfirm;
     const input: DispatchInput = {
       event: {
@@ -1031,7 +1032,7 @@ export class DrillRunner {
   ): Promise<"none" | "awaiting" | { additionalTasks: TaskPlanItem[] }> {
     const { db } = this.deps;
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const scenario = getScenario(scenarioKey);
+    const scenario = requireScenario(db, scenarioKey);
     const requiresConfirmation = !JSON.parse(drill.params).autoConfirm;
     const input: RedispatchInput = {
       event: {
@@ -1428,7 +1429,7 @@ export class DrillRunner {
   ): ReviewInput {
     const { db } = this.deps;
     const scenarioKey = drill.scenario_key as ScenarioKey;
-    const scenario = getScenario(scenarioKey);
+    const scenario = requireScenario(db, scenarioKey);
     const nodes = listTimelineByDrill(db, drill.id);
     const tasks = listTasksByDrill(db, drill.id);
 

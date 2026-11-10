@@ -15,6 +15,8 @@ import {
 } from "../db/queries";
 import type { ClockState } from "../simulation/clock";
 import { generateSignalScript } from "../simulation/engine";
+// BUILTIN_SCENARIOS[0]=fire_alarm、[1]=medical_emergency(种子数组顺序)
+import { BUILTIN_SCENARIOS } from "../simulation/scenarios";
 import { computeScore, type DrillMetrics } from "../simulation/score-rules";
 import type { TaskPlanItem } from "../simulation/task-rules";
 import { DrillRunner } from "./drill-runner";
@@ -104,7 +106,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     expect(getDrill(db, drillId)?.status).toBe("completed");
 
     // 到期信号按场景脚本 + 种子确定性写入 signals,全部完成感知
-    const script = generateSignalScript("fire_alarm", 42);
+    const script = generateSignalScript(BUILTIN_SCENARIOS[0], 42);
     const signals = listSignalsByDrill(db, drillId);
     expect(signals).toHaveLength(script.length);
     expect(signals.map((s) => s.source_ref)).toEqual(script.map((s) => s.sourceRef));
@@ -161,7 +163,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     await driveUntilNotRunning(runner, realNow);
 
     expect(runner.status).toBe("completed");
-    const script = generateSignalScript("medical_emergency", 7);
+    const script = generateSignalScript(BUILTIN_SCENARIOS[1], 7);
     expect(listSignalsByDrill(db, drillId)).toHaveLength(script.length);
     // 单事件焦点:两路信号只归并到一个事件
     const eventsCount = db
@@ -201,7 +203,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     const anomalies = listTimelineByDrill(db, drillId).filter(
       (n) => n.node_type === "anomaly" && n.phase === "perception",
     );
-    expect(anomalies).toHaveLength(generateSignalScript("fire_alarm", 42).length);
+    expect(anomalies).toHaveLength(generateSignalScript(BUILTIN_SCENARIOS[0], 42).length);
     expect(anomalies.every((n) => n.title.includes("降级"))).toBe(true);
     db.close();
   });
@@ -241,7 +243,7 @@ describe("推演运行器 · 感知段(缝 1)", () => {
     const { drillId } = await runner.start({ scenarioKey: "medical_emergency", seed: 7, speed: 60, autoConfirm: true });
 
     // 模拟进程中断:首信号已落库(status=new)但未来得及感知
-    const script = generateSignalScript("medical_emergency", 7);
+    const script = generateSignalScript(BUILTIN_SCENARIOS[1], 7);
     const first = script[0];
     insertSignal(db, {
       drill_id: drillId,

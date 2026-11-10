@@ -2,7 +2,6 @@
 
 import type { DrillHistoryItemDTO } from "./drill-types";
 import type { EventSeverity } from "@/simulation/state-machines";
-import type { ScenarioKey } from "@/simulation/scenarios";
 
 export type DrillSortKey = "name" | "startedAt" | "scenario" | "severity" | "score" | "status";
 
@@ -28,7 +27,6 @@ export function sortDrills(
   drills: DrillHistoryItemDTO[],
   key: DrillSortKey,
   dir: "asc" | "desc",
-  scenarioNames: Record<ScenarioKey, string>,
 ): DrillHistoryItemDTO[] {
   const factor = dir === "asc" ? 1 : -1;
   return [...drills].sort((a, b) => {
@@ -38,7 +36,7 @@ export function sortDrills(
       case "startedAt":
         return compareNullable(a.startedAt, b.startedAt, (x, y) => factor * (Date.parse(x) - Date.parse(y)));
       case "scenario":
-        return factor * (scenarioNames[a.scenarioKey] ?? "").localeCompare(scenarioNames[b.scenarioKey] ?? "", "zh-Hans-CN");
+        return factor * a.scenarioName.localeCompare(b.scenarioName, "zh-Hans-CN");
       case "severity":
         return compareNullable(a.severity, b.severity, (x, y) => factor * (SEVERITY_RANK[x] - SEVERITY_RANK[y]));
       case "score":

@@ -8,8 +8,8 @@ import type { Db } from "../db/client";
 import { insertEvent, insertTimelineNode, updateSignalStatus } from "../db/queries";
 import type { TimelineNodeRow } from "../db/types";
 import type { ScheduledSignal } from "../simulation/engine";
+import { requireScenario } from "../simulation/scenario-store";
 import { formatSimClock, simTimeIso } from "../simulation/clock";
-import { getScenario } from "../simulation/engine";
 import type { ScenarioKey } from "../simulation/scenarios";
 
 /** 已写入 signals 表、等待感知处理的到期信号 */
@@ -47,7 +47,7 @@ export function buildPerceptionGraph(deps: PerceptionGraphDeps) {
   const { db, model, now } = deps;
 
   async function perceive(state: typeof PerceptionGraphState.State) {
-    const scenario = getScenario(state.scenarioKey);
+    const scenario = requireScenario(db, state.scenarioKey);
     let eventId = state.eventId;
     const processed: string[] = [];
 

@@ -1,7 +1,7 @@
-// 场景定义：第一期两类事件（消防警报、学生突发疾病）
+// 场景定义：内置两类事件（消防警报、学生突发疾病）作为种子模板；自定义场景经事件库(scenarios 表)增删改查
 // 所有信号与演变节点均为演练数据，payload 显式携带 simulated: true，不得伪装真实设备数据
 
-export type ScenarioKey = "fire_alarm" | "medical_emergency";
+export type ScenarioKey = string;
 export type SignalSourceKind = "sensor" | "camera";
 
 export interface SignalTemplate {
@@ -27,6 +27,8 @@ export interface Scenario {
   key: ScenarioKey;
   name: string;
   description: string;
+  /** 事件类型中文名（监测中心展示；eventType 语义 = 场景 key） */
+  eventTypeLabel: string;
   /** 默认模拟开始时刻（一天内，HH:mm） */
   defaultSimStart: string;
   defaults: {
@@ -37,11 +39,13 @@ export interface Scenario {
   evolution: EvolutionTemplate[];
 }
 
-export const SCENARIOS: Record<ScenarioKey, Scenario> = {
-  fire_alarm: {
+/** 内置场景种子（迁移后写入 scenarios 表并锁定；自定义场景可复制为起点） */
+export const BUILTIN_SCENARIOS: Scenario[] = [
+  {
     key: "fire_alarm",
     name: "消防警报",
     description: "图书馆三层东区烟雾浓度超标，视觉确认后升级处置并组织疏散",
+    eventTypeLabel: "消防警报",
     defaultSimStart: "14:00",
     defaults: { location: "图书馆三层东区", intensity: "medium" },
     signals: [
@@ -91,10 +95,11 @@ export const SCENARIOS: Record<ScenarioKey, Scenario> = {
       },
     ],
   },
-  medical_emergency: {
+  {
     key: "medical_emergency",
     name: "学生突发疾病",
     description: "操场西侧学生倒地，手环心率异常与摄像头倒地检测先后触发",
+    eventTypeLabel: "突发疾病",
     defaultSimStart: "10:15",
     defaults: { location: "操场西侧跑道", intensity: "medium" },
     signals: [
@@ -142,4 +147,4 @@ export const SCENARIOS: Record<ScenarioKey, Scenario> = {
       },
     ],
   },
-};
+];

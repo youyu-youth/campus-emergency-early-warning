@@ -130,4 +130,23 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_reports_drill ON reports(drill_id);
     `,
   },
+  {
+    name: "0003_scenarios",
+    sql: `
+      CREATE TABLE IF NOT EXISTS scenarios (
+        key TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        event_type_label TEXT NOT NULL DEFAULT '',
+        default_sim_start TEXT NOT NULL DEFAULT '09:00',
+        defaults TEXT NOT NULL DEFAULT '{}',
+        signals TEXT NOT NULL DEFAULT '[]',
+        evolution TEXT NOT NULL DEFAULT '[]',
+        is_builtin INTEGER NOT NULL DEFAULT 0,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `,
+  },
 ];

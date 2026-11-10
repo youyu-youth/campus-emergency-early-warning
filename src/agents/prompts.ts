@@ -30,7 +30,7 @@ ${role}。请从下述信号中提取:位置、事件类型、发生时间(模�
 仅输出一个 JSON 对象,不要输出任何其他文字或代码块标记。字段如下:
 {
   "location": "解读出的具体位置(中文)",
-  "eventType": "fire_alarm 或 medical_emergency",
+  "eventType": "固定填 ${input.scenarioKey}(与场景标识一致,不要自造其他值)",
   "title": "事件标题(中文一句话,isFirstSignal 为后续信号时也请给出概括标题)",
   "occurredTime": "解读出的发生时间(HH:mm:ss,基于模拟时间)",
   "evidence": ["证据要点(中文,逐条列出)"],

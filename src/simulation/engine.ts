@@ -1,8 +1,9 @@
 // 模拟引擎骨架：由场景模板 + 随机种子生成确定性的信号脚本与演变节点
 // 同一场景配置与种子 → 完全一致的推演输入（可复现）
+// 场景来源：scenario-store(scenarios 表,含内置种子与自定义事件)——本模块只做纯计算
 
 import { jitter, mulberry32, randRange } from "./rng";
-import { SCENARIOS, type Scenario, type ScenarioKey, type SignalSourceKind } from "./scenarios";
+import type { Scenario, SignalSourceKind } from "./scenarios";
 
 export interface ScheduledSignal {
   offsetMs: number;
@@ -23,13 +24,8 @@ export interface ScheduledEvolution {
 /** 时间偏移的抖动幅度（±15%），由种子决定具体值 */
 const JITTER_RATIO = 0.15;
 
-export function getScenario(key: ScenarioKey): Scenario {
-  return SCENARIOS[key];
-}
-
 // 生成信号脚本：偏移抖动、置信度在区间内取值，按发生顺序排列
-export function generateSignalScript(key: ScenarioKey, seed: number): ScheduledSignal[] {
-  const scenario = SCENARIOS[key];
+export function generateSignalScript(scenario: Scenario, seed: number): ScheduledSignal[] {
   const rng = mulberry32(seed);
   return scenario.signals
     .map((template) => ({
@@ -45,8 +41,7 @@ export function generateSignalScript(key: ScenarioKey, seed: number): ScheduledS
 }
 
 // 生成场景演变节点：使用独立随机流，不影响信号序列
-export function generateEvolution(key: ScenarioKey, seed: number): ScheduledEvolution[] {
-  const scenario = SCENARIOS[key];
+export function generateEvolution(scenario: Scenario, seed: number): ScheduledEvolution[] {
   const rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   return scenario.evolution
     .map((template) => ({

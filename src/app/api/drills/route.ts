@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { getDb } from "@/db/client";
+import { listScenarioItems } from "@/simulation/scenario-store";
 import { drillServiceApi } from "@/server/drill-service";
 
 /** GET /api/drills:当前活跃演练摘要(壳层状态条轮询源) */
@@ -14,7 +16,7 @@ export async function GET() {
 }
 
 const StartBodySchema = z.object({
-  scenarioKey: z.enum(["fire_alarm", "medical_emergency"]),
+  scenarioKey: z.string().min(1),
   seed: z.number().int().positive().optional(),
   speed: z.number().positive().max(10).optional(),
   autoConfirm: z.boolean().optional(),
@@ -31,6 +33,11 @@ export async function POST(request: Request) {
   const parsed = StartBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: `参数无效:${parsed.error.issues[0]?.message ?? ""}` }, { status: 400 });
+  }
+  // 场景存在性校验(须存在且未删除;软删除的场景不可再发起)
+  const available = listScenarioItems(getDb()).some((item) => item.scenario.key === parsed.data.scenarioKey);
+  if (!available) {
+    return NextResponse.json({ error: "场景不存在或已被删除" }, { status: 400 });
   }
   const api = drillServiceApi();
   try {

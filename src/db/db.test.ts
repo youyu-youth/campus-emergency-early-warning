@@ -21,6 +21,7 @@ describe("数据库迁移与约束", () => {
       "graph_runs",
       "notifications",
       "reports",
+      "scenarios",
       "signals",
       "tasks",
       "timeline_nodes",

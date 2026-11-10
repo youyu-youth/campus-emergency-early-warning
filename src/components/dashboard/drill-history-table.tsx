@@ -10,7 +10,6 @@ import { StateChip } from "@/components/status/state-chip";
 import type { DrillHistoryItemDTO } from "@/lib/drill-types";
 import { drillRowHref, sortDrills, startedAtLabel, type DrillSortKey } from "@/lib/drill-list-utils";
 import { cn } from "@/lib/utils";
-import type { ScenarioKey } from "@/simulation/scenarios";
 
 const COLUMNS: Array<{ key: DrillSortKey; label: string; className?: string }> = [
   { key: "name", label: "演练" },
@@ -25,14 +24,12 @@ const COLUMNS: Array<{ key: DrillSortKey; label: string; className?: string }> =
  *  flow 变体供 /reports 列表页:自然高度随页面滚动;默认 panel 变体为指挥台视口内填充 */
 export function DrillHistoryTable({
   drills,
-  scenarioNames,
   className,
   title = "演练历史",
   flow = false,
 }: {
   /** null = 首次加载中 */
   drills: DrillHistoryItemDTO[] | null;
-  scenarioNames: Record<ScenarioKey, string>;
   className?: string;
   title?: string;
   flow?: boolean;
@@ -41,8 +38,8 @@ export function DrillHistoryTable({
   const [sort, setSort] = useState<{ key: DrillSortKey; dir: "asc" | "desc" }>({ key: "startedAt", dir: "desc" });
 
   const sorted = useMemo(
-    () => (drills ? sortDrills(drills, sort.key, sort.dir, scenarioNames) : null),
-    [drills, sort, scenarioNames],
+    () => (drills ? sortDrills(drills, sort.key, sort.dir) : null),
+    [drills, sort],
   );
 
   const toggleSort = (key: DrillSortKey) => {
@@ -142,7 +139,7 @@ export function DrillHistoryTable({
                         {startedAtLabel(drill.startedAt)}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">
-                        {scenarioNames[drill.scenarioKey] ?? drill.scenarioKey}
+                        {drill.scenarioName}
                       </td>
                       <td className="px-3 py-2.5 text-center">
                         {drill.severity ? (

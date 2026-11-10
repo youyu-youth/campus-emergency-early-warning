@@ -24,9 +24,12 @@ import type { DrillRow, NotificationRow, ReportRow, SignalRow, TaskRow, Timeline
 import { DrillRunner, type DrillRunState, type StartDrillInput } from "../runner/drill-runner";
 import { formatSimClock, simOffsetMs, type ClockState } from "../simulation/clock";
 import type { ScenarioKey } from "../simulation/scenarios";
+import { findScenario } from "../simulation/scenario-store";
 import { PHASE_ORDER, type DrillPhase, type DrillStatus, type EventSeverity } from "../simulation/state-machines";
 import type { TaskPlanItem } from "../simulation/task-rules";
 import type {
+  AgentActivityDTO,
+  AgentCallDTO,
   AgentStatusDTO,
   DrillDetailDTO,
   DrillHistoryItemDTO,
@@ -44,6 +47,7 @@ import type {
 const TICK_INTERVAL_MS = 200;
 
 export type {
+  AgentActivityDTO,
   AgentStatusDTO,
   DrillDetailDTO,
   DrillHistoryItemDTO,
@@ -236,7 +240,7 @@ function toSignalDTO(row: SignalRow): SignalDTO {
  * - signal 节点 detail = { input: { signalId }, output },output 即感知提取
  * - anomaly 节点 detail = { signalId },标记该信号为降级解读
  */
-function attachSignalPerceptions(signals: SignalDTO[], timelineRows: TimelineNodeRow[], eventSignalId: string | null): void {
+function attachSignalPerceptions(db: Db, signals: SignalDTO[], timelineRows: TimelineNodeRow[], eventSignalId: string | null): void {
   const byId = new Map(signals.map((s) => [s.id, s]));
   for (const node of timelineRows) {
     let detail: Record<string, unknown> = {};
@@ -250,9 +254,12 @@ function attachSignalPerceptions(signals: SignalDTO[], timelineRows: TimelineNod
       const output = detail.output as SignalPerceptionDTO | undefined;
       const signal = signalId ? byId.get(signalId) : undefined;
       if (signal && output) {
+        const eventType = String(output.eventType ?? "");
         signal.perception = {
           title: String(output.title ?? ""),
-          eventType: String(output.eventType ?? ""),
+          eventType,
+          // 事件类型中文名(eventType=场景 key;场景已删时缺省,前端回退原值)
+          eventTypeLabel: findScenario(db, eventType)?.eventTypeLabel,
           location: String(output.location ?? ""),
           occurredTime: String(output.occurredTime ?? ""),
           evidence: Array.isArray(output.evidence) ? output.evidence.map(String) : [],
@@ -318,6 +325,21 @@ const AGENT_DEFS: Array<{ key: string; label: string; phases: DrillPhase[] }> = 
   { key: "review", label: "复盘评估", phases: ["review"] },
 ];
 
+/** 编队 key → timeline actor(协作页与编队状态共用) */
+const AGENT_ACTOR_BY_KEY: Record<string, string> = {
+  perception: "monitor_agent",
+  command: "command_agent",
+  handling_security: "security_agent",
+  handling_medical: "medical_agent",
+  handling_logistics: "logistics_agent",
+  notification: "notification_agent",
+  review: "review_agent",
+};
+
+const KEY_BY_ACTOR: Record<string, string> = Object.fromEntries(
+  Object.entries(AGENT_ACTOR_BY_KEY).map(([key, actor]) => [actor, key]),
+);
+
 /** 智能体编队状态推导:终态全员已完成;当前阶段的编队「工作中/执行中」,已过阶段「已完成」,未到「待命」 */
 function deriveAgentStatuses(
   phase: DrillPhase,
@@ -325,15 +347,6 @@ function deriveAgentStatuses(
   tasks: TaskRow[],
   finished = false,
 ): AgentStatusDTO[] {
-  const actorByKey: Record<string, string> = {
-    perception: "monitor_agent",
-    command: "command_agent",
-    handling_security: "security_agent",
-    handling_medical: "medical_agent",
-    handling_logistics: "logistics_agent",
-    notification: "notification_agent",
-    review: "review_agent",
-  };
   const latestByActor = new Map<string, TimelineNodeRow>();
   for (const node of timeline) {
     if (node.actor) latestByActor.set(node.actor, node);
@@ -341,7 +354,7 @@ function deriveAgentStatuses(
   const currentOrdinal = PHASE_ORDER.indexOf(phase);
 
   return AGENT_DEFS.map((def) => {
-    const latest = latestByActor.get(actorByKey[def.key]) ?? null;
+    const latest = latestByActor.get(AGENT_ACTOR_BY_KEY[def.key]) ?? null;
     let status: AgentStatusDTO["status"] = "standby";
     if (finished) {
       status = "done";
@@ -355,6 +368,104 @@ function deriveAgentStatuses(
       status = "done";
     }
     return { key: def.key, label: def.label, status, latestAction: latest?.title ?? null };
+  });
+}
+
+/** detail 载荷 → 裁剪摘要(协作页展示输入/输出;损坏/空值容忍返回 undefined) */
+function summarizePayload(value: unknown, max = 200): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  let text: string;
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * 协作页消费的编队活动聚合:
+ * - 调用记录来自 timeline(该编队 actor 的节点,anomaly=降级;input/output 为 detail 裁剪摘要)
+ * - 处置角色耗时/成功率来自任务结果 JSON(规则计算)
+ * - 通知角色送达统计来自通知 delivery(规则模拟)
+ */
+export function deriveAgentActivity(
+  timeline: TimelineNodeRow[],
+  tasks: TaskRow[],
+  notifications: NotificationDTO[],
+): AgentActivityDTO[] {
+  const callsByKey = new Map<string, AgentCallDTO[]>(AGENT_DEFS.map((def) => [def.key, []]));
+  for (const node of timeline) {
+    const key = node.actor ? KEY_BY_ACTOR[node.actor] : undefined;
+    if (!key) continue;
+    let detail: Record<string, unknown> = {};
+    try {
+      detail = JSON.parse(node.detail) as Record<string, unknown>;
+    } catch {
+      detail = {};
+    }
+    const input = summarizePayload(detail.input);
+    const output = summarizePayload(detail.output);
+    (callsByKey.get(key) ?? []).push({
+      seq: node.seq,
+      nodeType: node.node_type,
+      title: node.title,
+      simTime: node.sim_time,
+      degraded: node.node_type === "anomaly",
+      ...(input !== undefined ? { input } : {}),
+      ...(output !== undefined ? { output } : {}),
+    });
+  }
+
+  return AGENT_DEFS.map((def) => {
+    const calls = callsByKey.get(def.key) ?? [];
+    const degraded = calls.filter((c) => c.degraded).length;
+
+    let avgDurationMs: number | null = null;
+    let successRate: number | null = null;
+    if (def.key.startsWith("handling_")) {
+      const role = def.key.replace("handling_", "");
+      const results: Array<{ durationMs?: unknown; success?: unknown }> = [];
+      for (const task of tasks) {
+        if (task.role !== role || !task.result) continue;
+        try {
+          results.push(JSON.parse(task.result) as { durationMs?: unknown; success?: unknown });
+        } catch {
+          // 结果损坏容忍:跳过
+        }
+      }
+      const durations = results
+        .map((r) => r.durationMs)
+        .filter((d): d is number => typeof d === "number" && d >= 0);
+      if (durations.length > 0) {
+        avgDurationMs = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+      }
+      const judged = results.filter((r) => typeof r.success === "boolean");
+      if (judged.length > 0) {
+        successRate = judged.filter((r) => r.success === true).length / judged.length;
+      }
+    }
+
+    let delivery: AgentActivityDTO["stats"]["delivery"] = null;
+    if (def.key === "notification") {
+      let total = 0;
+      let delivered = 0;
+      for (const n of notifications) {
+        if (n.delivery && typeof n.delivery.total === "number") {
+          total += n.delivery.total;
+          delivered += typeof n.delivery.delivered === "number" ? n.delivery.delivered : 0;
+        }
+      }
+      if (total > 0) delivery = { total, delivered };
+    }
+
+    return {
+      key: def.key,
+      // 最近 5 次,新→旧
+      recentCalls: calls.slice(-5).reverse(),
+      stats: { calls: calls.length, degraded, avgDurationMs, successRate, delivery },
+    };
   });
 }
 
@@ -412,7 +523,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
   const finished = drill.status === "completed" || drill.status === "aborted";
   const reportRow = getReportByDrillId(db, drill.id);
   const signals = listSignalsByDrill(db, drill.id).map(toSignalDTO);
-  attachSignalPerceptions(signals, timelineRows, eventRow?.signal_id ?? null);
+  attachSignalPerceptions(db, signals, timelineRows, eventRow?.signal_id ?? null);
   const notifications = listNotificationsByDrill(db, drill.id).map(toNotificationDTO);
   attachNotificationDetails(notifications, timelineRows);
 
@@ -434,6 +545,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
       name: drill.name,
       status: drill.status as DrillStatus,
       scenarioKey: drill.scenario_key as ScenarioKey,
+      scenarioName: findScenario(db, drill.scenario_key)?.name ?? drill.scenario_key,
       seed: drill.seed,
       score: drill.score,
       simClockLabel: clockLabel(drill),
@@ -451,6 +563,7 @@ export function buildDrillDetail(db: Db, drillId: string): DrillDetailDTO | null
     signals,
     report: reportRow ? toReportDTO(reportRow) : null,
     agents: deriveAgentStatuses(state.phase, timelineRows, taskRows, finished),
+    agentActivity: deriveAgentActivity(timelineRows, taskRows, notifications),
     notificationRetryable: notifications.some((n) => n.status === "failed") && drill.status !== "aborted",
   };
 }
@@ -461,6 +574,7 @@ export function buildDrillHistory(db: Db): DrillHistoryItemDTO[] {
     id: row.id,
     name: row.name,
     scenarioKey: row.scenario_key as DrillHistoryItemDTO["scenarioKey"],
+    scenarioName: findScenario(db, row.scenario_key)?.name ?? row.scenario_key,
     status: row.status as DrillHistoryItemDTO["status"],
     severity: (row.severity as EventSeverity | null) ?? null,
     score: row.score,

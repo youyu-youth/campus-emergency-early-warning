@@ -5,11 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import { openDatabase } from "../db/client";
 import { getActiveDrills, getDrill, getGraphRunByDrillId } from "../db/queries";
-import type { DrillRow } from "../db/types";
+import type { DrillRow, TaskRow, TimelineNodeRow } from "../db/types";
 import { DEMO_SCRIPTS } from "../../scripts/demo-scripts";
 import { ScriptedModel, type ScriptedResponse } from "../agents/model";
 import { DrillRunner } from "../runner/drill-runner";
-import { buildDrillDetail, buildDrillHistory, buildDrillSummary, buildRestartInput } from "./drill-service";
+import type { NotificationDTO } from "../lib/drill-types";
+import { buildDrillDetail, buildDrillHistory, buildDrillSummary, buildRestartInput, deriveAgentActivity } from "./drill-service";
 
 async function driveUntilNotRunning(runner: DrillRunner, realNow: { t: number }, maxSteps = 400): Promise<void> {
   for (let i = 0; i < maxSteps && runner.status === "running"; i++) {
@@ -352,3 +353,130 @@ describe("演练服务 · 查询 DTO 组装", () => {
     db.close();
   });
 });
+
+describe("协作页活动聚合 deriveAgentActivity", () => {
+  const simTime = "2026-11-08T06:00:00.000Z";
+
+  function timelineNode(
+    seq: number,
+    actor: string | null,
+    nodeType: string,
+    detail: Record<string, unknown>,
+  ): TimelineNodeRow {
+    return {
+      id: `n${seq}`,
+      drill_id: "d1",
+      event_id: null,
+      seq,
+      phase: "handling",
+      node_type: nodeType,
+      title: `节点${seq}`,
+      detail: JSON.stringify(detail),
+      actor,
+      requires_confirmation: 0,
+      sim_time: simTime,
+      real_time: simTime,
+      created_at: simTime,
+    };
+  }
+
+  function taskRow(role: string, result: Record<string, unknown> | null): TaskRow {
+    return {
+      id: `t-${role}-${Math.random().toString(36).slice(2, 6)}`,
+      drill_id: "d1",
+      event_id: "e1",
+      role,
+      title: "任务",
+      description: "",
+      status: "done",
+      result: result === null ? null : JSON.stringify(result),
+      dispatched_sim_time: simTime,
+      started_sim_time: simTime,
+      completed_sim_time: simTime,
+      created_at: simTime,
+      updated_at: simTime,
+    };
+  }
+
+  it("按编队聚合调用/降级计数与最近调用(新→旧,含输入输出摘要)", () => {
+    const timeline = [
+      timelineNode(1, "monitor_agent", "signal", { input: { signalId: "s1" }, output: { title: "疑似火情" } }),
+      timelineNode(2, "command_agent", "grading", { input: { event: "火情" }, output: { suggestedSeverity: "II" } }),
+      timelineNode(3, "command_agent", "anomaly", { degraded: { reason: "timeout" } }),
+    ];
+    const result = deriveAgentActivity(timeline, [], []);
+    const byKey = new Map(result.map((a) => [a.key, a]));
+
+    const perception = byKey.get("perception")!;
+    expect(perception.stats).toMatchObject({ calls: 1, degraded: 0, avgDurationMs: null, successRate: null, delivery: null });
+    expect(perception.recentCalls[0]).toMatchObject({ seq: 1, degraded: false });
+    expect(perception.recentCalls[0].input).toContain("signalId");
+    expect(perception.recentCalls[0].output).toContain("疑似火情");
+
+    const command = byKey.get("command")!;
+    expect(command.stats).toMatchObject({ calls: 2, degraded: 1 });
+    expect(command.recentCalls[0]).toMatchObject({ seq: 3, degraded: true });
+  });
+
+  it("处置角色从任务结果计算平均耗时与成功率;损坏结果容忍跳过", () => {
+    const timeline = [timelineNode(1, "security_agent", "feedback", { output: { narrative: "完成" } })];
+    const tasks = [
+      taskRow("security", { durationMs: 1000, success: true, attempts: 1 }),
+      taskRow("security", { durationMs: 3000, success: false, attempts: 2 }),
+      taskRow("security", null),
+      taskRow("medical", { durationMs: 999, success: true }),
+    ];
+    const security = deriveAgentActivity(timeline, tasks, []).find((a) => a.key === "handling_security")!;
+    expect(security.stats.avgDurationMs).toBe(2000);
+    expect(security.stats.successRate).toBe(0.5);
+  });
+
+  it("通知角色聚合送达统计;其他角色不产出送达", () => {
+    const timeline = [timelineNode(1, "notification_agent", "notification", { output: {} })];
+    const notifications = [
+      { delivery: { total: 100, delivered: 90 } },
+      { delivery: { total: 50, delivered: 50 } },
+      { delivery: null },
+    ] as unknown as NotificationDTO[];
+    const result = deriveAgentActivity(timeline, [], notifications);
+    expect(result.find((a) => a.key === "notification")!.stats.delivery).toEqual({ total: 150, delivered: 140 });
+    expect(result.find((a) => a.key === "review")!.stats.delivery).toBeNull();
+  });
+
+  it("输入/输出摘要截断到 200 字符,损坏 detail JSON 容忍为空", () => {
+    const long = "x".repeat(500);
+    const timeline = [
+      timelineNode(1, "review_agent", "status_change", { input: { blob: long }, output: { ok: true } }),
+    ];
+    timeline.push({
+      ...timelineNode(2, "review_agent", "status_change", {}),
+      detail: "{broken json",
+    } as TimelineNodeRow);
+    const review = deriveAgentActivity(timeline, [], []).find((a) => a.key === "review")!;
+    const first = review.recentCalls.find((c) => c.seq === 1)!;
+    expect(first.input!.length).toBe(201); // 200 字符 + 省略号
+    expect(first.input!.endsWith("…")).toBe(true);
+    const broken = review.recentCalls.find((c) => c.seq === 2)!;
+    expect(broken.input).toBeUndefined();
+    expect(broken.output).toBeUndefined();
+  });
+
+  it("操作员/推演引擎等非编队 actor 不进入聚合,编队顺序与 AGENT_DEFS 一致", () => {
+    const timeline = [
+      timelineNode(1, "operator", "operator_action", { action: "confirm" }),
+      timelineNode(2, "drill_runner", "status_change", { from: "running", to: "paused" }),
+    ];
+    const result = deriveAgentActivity(timeline, [], []);
+    expect(result.map((a) => a.key)).toEqual([
+      "perception",
+      "command",
+      "handling_security",
+      "handling_medical",
+      "handling_logistics",
+      "notification",
+      "review",
+    ]);
+    expect(result.every((a) => a.stats.calls === 0 && a.recentCalls.length === 0)).toBe(true);
+  });
+});
+

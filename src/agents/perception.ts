@@ -8,7 +8,7 @@ import { perceptionPrompt } from "./prompts";
 
 export const PerceptionInputSchema = z.object({
   signal: z.custom<ScheduledSignal>((s) => typeof s === "object" && s !== null && "signalType" in s),
-  scenarioKey: z.enum(["fire_alarm", "medical_emergency"]),
+  scenarioKey: z.string().min(1),
   scenarioName: z.string().min(1),
   /** 信号到期时的模拟时钟显示(HH:mm:ss) */
   simTimeLabel: z.string().min(1),
@@ -19,7 +19,7 @@ export type PerceptionInput = z.infer<typeof PerceptionInputSchema>;
 
 export const PerceptionOutputSchema = z.object({
   location: z.string().min(1),
-  eventType: z.enum(["fire_alarm", "medical_emergency"]),
+  eventType: z.string().min(1),
   title: z.string().min(1),
   occurredTime: z.string().min(1),
   evidence: z.array(z.string().min(1)).min(1),

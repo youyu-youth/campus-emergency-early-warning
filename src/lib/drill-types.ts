@@ -27,6 +27,8 @@ export interface AgentStatusDTO {
 export interface SignalPerceptionDTO {
   title: string;
   eventType: string;
+  /** 事件类型中文名(来自场景定义;场景缺失时回退 eventType 原值) */
+  eventTypeLabel?: string;
   location: string;
   occurredTime: string;
   evidence: string[];
@@ -58,6 +60,8 @@ export interface DrillHistoryItemDTO {
   id: string;
   name: string;
   scenarioKey: ScenarioKey;
+  /** 场景中文名(服务端从场景仓库解析,场景已删也保留) */
+  scenarioName: string;
   status: DrillStatus;
   severity: EventSeverity | null;
   score: number | null;
@@ -92,6 +96,38 @@ export interface ReportDTO {
   metrics: DrillMetrics;
   source: "model" | "degraded";
   createdAt: string;
+}
+
+/** 协作页消费的单次智能体调用(来自 timeline 节点;输入/输出为 detail 裁剪摘要) */
+export interface AgentCallDTO {
+  seq: number;
+  nodeType: string;
+  title: string;
+  simTime: string;
+  /** true=模型超时/输出无效,该节点为规则降级记录(anomaly) */
+  degraded: boolean;
+  /** 输入摘要 */
+  input?: string;
+  /** 输出摘要 */
+  output?: string;
+}
+
+/** 协作页消费的智能体活动聚合(最近调用 + 规则统计;耗时/成功率仅处置角色有值,送达仅通知角色) */
+export interface AgentActivityDTO {
+  key: string;
+  recentCalls: AgentCallDTO[];
+  stats: {
+    /** 该智能体的 timeline 调用节点数(含降级) */
+    calls: number;
+    /** 降级次数(anomaly 节点) */
+    degraded: number;
+    /** 平均任务耗时毫秒(规则模拟;仅处置角色,无结果任务时为 null) */
+    avgDurationMs: number | null;
+    /** 任务成功率 0-1(规则结果;仅处置角色) */
+    successRate: number | null;
+    /** 模拟送达统计(仅通知角色) */
+    delivery: { total: number; delivered: number } | null;
+  };
 }
 
 export interface TimelineNodeDTO {
@@ -146,6 +182,67 @@ export interface NotificationDTO {
   publishes: NotificationPublishDTO[];
 }
 
+/** 事件库 · 信号模板(结构化读数,提交时服务端拼 payload 并盖模拟标记) */
+export interface ScenarioSignalTemplateDTO {
+  /** 相对演练开始的模拟偏移(毫秒) */
+  offsetMs: number;
+  kind: "sensor" | "camera";
+  /** 模拟设备编号(如 LIB-3F-SMOKE-01) */
+  sourceRef: string;
+  location: string;
+  signalType: string;
+  confidence: [number, number];
+  /** 原始读数(键值随信号类型;服务端存储时并入 payload.simulated) */
+  reading: Record<string, string | number>;
+}
+
+/** 事件库 · 演变里程碑模板 */
+export interface ScenarioEvolutionDTO {
+  offsetMs: number;
+  milestone: string;
+  note: string;
+}
+
+/** 事件库场景(管理页与发起页消费;key 为标识,eventType 语义 = key) */
+export interface ScenarioDTO {
+  key: string;
+  name: string;
+  description: string;
+  /** 事件类型中文名(监测中心展示) */
+  eventTypeLabel: string;
+  defaultSimStart: string;
+  location: string;
+  intensity: "low" | "medium" | "high";
+  signals: ScenarioSignalTemplateDTO[];
+  evolution: ScenarioEvolutionDTO[];
+  isBuiltin: boolean;
+  updatedAt: string;
+}
+
+/** 发起页场景卡片(ScenarioDTO 的轻量投影) */
+export interface ScenarioCardDTO {
+  key: string;
+  name: string;
+  description: string;
+  location: string;
+  intensity: "low" | "medium" | "high";
+  signalCount: number;
+  evolutionCount: number;
+  isBuiltin: boolean;
+}
+
+/** 事件库场景创建/更新提交体(表单组装与服务端 zod 校验共用形状;纯类型,client 安全) */
+export interface ScenarioBody {
+  name: string;
+  description: string;
+  eventTypeLabel: string;
+  defaultSimStart: string;
+  location: string;
+  intensity: "low" | "medium" | "high";
+  signals: ScenarioSignalTemplateDTO[];
+  evolution: ScenarioEvolutionDTO[];
+}
+
 export type PendingConfirmationDTO =
   | { kind: "grading"; suggested: EventSeverity; reasoning: string | null; nodeId: string }
   | {
@@ -163,6 +260,8 @@ export interface DrillDetailDTO {
     name: string;
     status: DrillStatus;
     scenarioKey: ScenarioKey;
+    /** 场景中文名(服务端从场景仓库解析,场景已删也保留) */
+    scenarioName: string;
     seed: number;
     score: number | null;
     simClockLabel: string;
@@ -190,6 +289,8 @@ export interface DrillDetailDTO {
   /** 复盘报告(completed 演练必有;运行中/终止为 null) */
   report: ReportDTO | null;
   agents: AgentStatusDTO[];
+  /** 协作页消费的编队活动聚合(与 agents 同 key 顺序) */
+  agentActivity: AgentActivityDTO[];
   /** 失败通知当前可否重试:存在 failed 通知且演练未终止,且(经 API 门面)运行器仍绑定本演练 */
   notificationRetryable: boolean;
 }

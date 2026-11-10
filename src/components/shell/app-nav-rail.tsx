@@ -7,6 +7,7 @@ import {
   ClipboardList,
   FlaskConical,
   HardDrive,
+  LibraryBig,
   LayoutDashboard,
   Megaphone,
   Network,
@@ -68,6 +69,7 @@ const NAV_GROUPS = [
     label: "推演",
     items: [
       { href: "/simulation", label: "事件模拟推演", icon: FlaskConical },
+      { href: "/scenarios", label: "事件库管理", icon: LibraryBig },
       { href: "/command", label: "事件详情工作区", icon: Siren },
       { href: "/agents", label: "智能体协作调度", icon: Network },
       { href: "/notifications", label: "通知发布中心", icon: Megaphone },

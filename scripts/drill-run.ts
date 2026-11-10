@@ -20,7 +20,7 @@ import {
 } from "../src/db/queries";
 import { formatSimClock } from "../src/simulation/clock";
 import type { DrillMetrics } from "../src/simulation/score-rules";
-import { SCENARIOS } from "../src/simulation/scenarios";
+import { requireScenario } from "../src/simulation/scenario-store";
 import { DrillRunner } from "../src/runner/drill-runner";
 import { AUDIENCE_LABELS, type DeliveryStats } from "../src/simulation/delivery-rules";
 import type { TaskPlanItem } from "../src/simulation/task-rules";
@@ -53,8 +53,8 @@ function parseArgs(argv: string[]): CliArgs {
   };
   const scenario = get("scenario");
   const seed = get("seed");
-  if (!scenario || !(scenario in SCENARIOS)) {
-    console.error(`用法:pnpm drill:run --scenario <${Object.keys(SCENARIOS).join("|")}> --seed <数字> [选项]`);
+  if (!scenario) {
+    console.error("用法:pnpm drill:run --scenario <场景key(内置 fire_alarm|medical_emergency 或事件库自定义 key)> --seed <数字> [选项]");
     process.exit(1);
   }
   if (!seed || !/^\d+$/.test(seed)) {
@@ -122,8 +122,9 @@ function printNode(node: TimelineNodeRow, simOriginMs: number): void {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   loadEnvLocal();
-  const scenarioKey = args.scenario as keyof typeof SCENARIOS;
-  const scenario = SCENARIOS[scenarioKey];
+  const db = getDb();
+  const scenarioKey: string = args.scenario;
+  const scenario = requireScenario(db, scenarioKey);
 
   const model =
     args.model === "fake"
@@ -140,7 +141,6 @@ async function main(): Promise<void> {
   );
   console.log("ℹ 推演进行中可用命令:p 暂停/继续 · 数字 设定倍速(如 120)· x 终止(需二次确认)");
 
-  const db = getDb();
   let simOriginMs = 0;
   const runner = new DrillRunner({
     db,

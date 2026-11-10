@@ -8,8 +8,8 @@ import type { Db } from "../db/client";
 import { insertTimelineNode } from "../db/queries";
 import type { TimelineNodeRow } from "../db/types";
 import { simTimeIso } from "../simulation/clock";
-import { getScenario } from "../simulation/engine";
 import type { ScenarioKey } from "../simulation/scenarios";
+import { requireScenario } from "../simulation/scenario-store";
 import { SEVERITY_LABELS, type EventSeverity } from "../simulation/state-machines";
 
 /** graph_runs.state 中研判段的定级进度(由运行器读写) */
@@ -56,7 +56,7 @@ export function buildGradingGraph(deps: GradingGraphDeps) {
   const { db, model, now } = deps;
 
   async function grade(state: typeof GradingGraphState.State) {
-    const scenario = getScenario(state.scenarioKey);
+    const scenario = requireScenario(db, state.scenarioKey);
     const result = await runGrading(model, state.input);
     const realTime = new Date(now()).toISOString();
     const simTime = simTimeIso(state.simOriginMs, state.offsetMs);

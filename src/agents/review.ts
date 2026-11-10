@@ -9,13 +9,13 @@ import { reviewPrompt } from "./prompts";
 
 export const ReviewInputSchema = z.object({
   event: z.object({
-    type: z.enum(["fire_alarm", "medical_emergency"]),
+    type: z.string().min(1),
     title: z.string().min(1),
     location: z.string().min(1),
     severity: z.enum(["I", "II", "III", "IV"]),
     detectedSimTime: z.string().min(1),
   }),
-  scenarioKey: z.enum(["fire_alarm", "medical_emergency"]),
+  scenarioKey: z.string().min(1),
   scenarioName: z.string().min(1),
   /** 规则算好的指标(只读事实,模型引用但不参与计算) */
   metrics: z.object({
